@@ -8,6 +8,7 @@ Development of regression deep learning models for ABoVE Shrubs project.
 
 ```bash
 module load singularity;
+singularity build --sandbox /lscratch/$USER/container/above-shrubs docker://nasanccs/above-shrubs:latest
 ```
 
 ### Development container
@@ -16,7 +17,7 @@ module load singularity;
 
 ```bash
 module load singularity;
-singularity build --sandbox /lscratch/$USER/container/above-shrubs docker://nasanccs/above-shrubs:latest
+singularity build --sandbox /lscratch/$USER/container/above-shrubs docker://nasanccs/above-shrubs:dev
 ```
 
 2. Run the pipeline based on the specific you might need. For example:
