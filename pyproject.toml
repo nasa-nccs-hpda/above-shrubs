@@ -24,7 +24,7 @@ requires = [
     "xarray",
     "rioxarray",
     "numba",
-    "pygeotools @ git+https://github.com/dshean/pygeotools.git@master".
+    "pygeotools @ git+https://github.com/dshean/pygeotools.git@master",
     "tensorflow-caney @ git+https://github.com/nasa-nccs-hpda/tensorflow-caney.git@main",
 ]
 build-backend = "setuptools.build_meta"
@@ -35,7 +35,7 @@ write_to = "above_shrubs/version.py"
 [tool.coverage.run]
 branch = true
 relative_files = true
-source = ['vhr_cnn_chm']
+source = ['above_shrubs']
 omit = ['above_shrubs/version.py']
 
 [tool.coverage.report]
@@ -45,3 +45,6 @@ fail_under = 95
 [tool.black]
 line-length = 88
 target-version = ['py38']
+
+[project.scripts]
+above-shrubs-cnn-pipeline = "above_shrubs.view.chm_pipeline_cnn:main"
