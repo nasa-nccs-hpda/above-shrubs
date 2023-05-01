@@ -40,4 +40,4 @@ jobs:
           context: .
           file: ./requirements/Dockerfile
           push: true
-          tags: nasanccs/tensorflow-caney:latest
+          tags: nasanccs/above-shrubs:latest
