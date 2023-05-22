@@ -8,6 +8,7 @@ Development of regression deep learning models for ABoVE Shrubs project.
 
 ```bash
 module load singularity;
+mkdir -p /lscratch/$USER/container
 singularity build --sandbox /lscratch/$USER/container/above-shrubs docker://nasanccs/above-shrubs:dev
 ```
 
@@ -56,7 +57,7 @@ singularity exec --env PYTHONPATH="$NOBACKUP/development/above-shrubs:$NOBACKUP/
 singularity exec --env PYTHONPATH="$NOBACKUP/development/above-shrubs" --nv -B $NOBACKUP,/lscratch,/explore/nobackup/people /lscratch/$USER/container/above-shrubs python $NOBACKUP/development/above-shrubs/above_shrubs/view/chm_pipeline_cnn.py -c /explore/nobackup/people/jacaraba/development/above-shrubs/projects/chm_cnn/configs/above_shrubs_cnn_v1.yaml -s setup preprocess train predict validate
 ```
 
-### Using Slurm
+## Getting Started
 
 1. SSH to ADAPT Login
 
@@ -70,11 +71,10 @@ ssh adaptlogin.nccs.nasa.gov
 ssh gpulogin1
 ```
 
-3. Submit slurm script
+3. Clone above-shrubs repository
+
+Clone the github 
 
 ```bash
-sbatch slurm.sh preprocess
-sbatch slurm.sh train
-sbatch slurm.sh predict
-sbatch slurm.sh all
+git clone https://github.com/nasa-nccs-hpda/above-shrubs
 ```
