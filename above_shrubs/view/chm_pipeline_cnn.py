@@ -8,7 +8,7 @@ from above_shrubs.model.chm_pipeline import CHMPipeline
 # -----------------------------------------------------------------------------
 # main
 #
-# python chm_pipeline_cli.py -c config.yaml -s preprocess train
+# python chm_pipeline_cli.py -c config.yaml -s preprocess train predict
 # -----------------------------------------------------------------------------
 def main():
 
@@ -31,8 +31,12 @@ def main():
                         required=True,
                         dest='pipeline_step',
                         help='Pipeline step to perform',
-                        default=['preprocess', 'train', 'predict'],
-                        choices=['preprocess', 'train', 'predict'])
+                        default=[
+                            'setup', 'preprocess',
+                            'train', 'predict', 'validate'],
+                        choices=[
+                            'setup', 'preprocess',
+                            'train', 'predict', 'validate'])
 
     args = parser.parse_args()
 
@@ -43,12 +47,16 @@ def main():
     pipeline = CHMPipeline(args.config_file)
 
     # Regression CHM pipeline steps
+    if "setup" in args.pipeline_step:
+        pipeline.setup()
     if "preprocess" in args.pipeline_step:
         pipeline.preprocess()
     if "train" in args.pipeline_step:
         pipeline.train()
-    # if "predict" in args.pipeline_step:
-    #    pipeline.predict()
+    if "predict" in args.pipeline_step:
+        pipeline.predict()
+    if "validate" in args.pipeline_step:
+        pipeline.validate()
 
     logging.info(f'Took {(time.time()-timer)/60.0:.2f} min.')
 

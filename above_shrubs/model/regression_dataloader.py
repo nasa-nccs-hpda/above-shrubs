@@ -23,7 +23,11 @@ class RegressionDataLoaderSRLite(RegressionDataLoader):
         if y.shape[0] < y.shape[-1]:
             y = np.moveaxis(y, 0, -1)
 
+        # try this experiment
+        # small relative value to height of pixels with 0
+        # small random epsilon
         y[y < 0] = 0
+        y = abs(y)
 
         # Normalize labels, default is diving by 1.0
         x = normalize_image(x, self.conf.normalize)
