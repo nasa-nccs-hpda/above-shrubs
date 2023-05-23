@@ -2,7 +2,38 @@
 
 Development of regression deep learning models for ABoVE Shrubs project.
 
-## 1. Downloading Singularity Container
+## Getting Started
+
+1. SSH to ADAPT Login
+
+```bash
+ssh adaptlogin.nccs.nasa.gov
+```
+
+2. SSH to GPU Login
+
+```bash
+ssh gpulogin1
+```
+
+3. Clone above-shrubs repository
+
+Clone the github 
+
+```bash
+git clone https://github.com/nasa-nccs-hpda/above-shrubs
+```
+
+4. 
+
+## Downloading Singularity Container
+
+This project has two containers. The Development container has all of the Python dependencies, with the exception
+of the PIP installable modules of this repository. You will need to export the path to this repository in order
+to pull the latest changes.
+
+The second container is the production container which containers the latest stable release with a PIP installable
+module of this package. No need to export any paths to the PYTHONPATH environment variable.
 
 ### Development container
 
@@ -16,6 +47,7 @@ singularity build --sandbox /lscratch/$USER/container/above-shrubs docker://nasa
 
 ```bash
 module load singularity;
+mkdir -p /lscratch/$USER/container
 singularity build --sandbox /lscratch/$USER/container/above-shrubs docker://nasanccs/above-shrubs:latest
 ```
 
@@ -57,24 +89,3 @@ singularity exec --env PYTHONPATH="$NOBACKUP/development/above-shrubs:$NOBACKUP/
 singularity exec --env PYTHONPATH="$NOBACKUP/development/above-shrubs" --nv -B $NOBACKUP,/lscratch,/explore/nobackup/people /lscratch/$USER/container/above-shrubs python $NOBACKUP/development/above-shrubs/above_shrubs/view/chm_pipeline_cnn.py -c /explore/nobackup/people/jacaraba/development/above-shrubs/projects/chm_cnn/configs/above_shrubs_cnn_v1.yaml -s setup preprocess train predict validate
 ```
 
-## Getting Started
-
-1. SSH to ADAPT Login
-
-```bash
-ssh adaptlogin.nccs.nasa.gov
-```
-
-2. SSH to GPU Login
-
-```bash
-ssh gpulogin1
-```
-
-3. Clone above-shrubs repository
-
-Clone the github 
-
-```bash
-git clone https://github.com/nasa-nccs-hpda/above-shrubs
-```

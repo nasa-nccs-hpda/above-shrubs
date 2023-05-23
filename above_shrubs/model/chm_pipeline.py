@@ -2,8 +2,10 @@ import os
 import logging
 import numpy as np
 import rioxarray as rxr
-from pathlib import Path
 from tqdm import tqdm
+from pathlib import Path
+from itertools import repeat
+from multiprocessing import Pool, cpu_count
 
 from tensorflow_caney.utils.system import set_gpu_strategy, \
     set_mixed_precision, set_xla, seed_everything
@@ -51,7 +53,7 @@ class CHMPipeline(CNNRegression):
         self.logger.info(f'Labels dir: {self.labels_dir}')
 
         self.model_dir = self.conf.model_dir
-        self.logger.info(f'Model dir: {self.labels_dir}')
+        self.logger.info(f'Model dir: {self.model_dir}')
 
         # Create output directories
         for out_dir in [
@@ -65,38 +67,35 @@ class CHMPipeline(CNNRegression):
     # -------------------------------------------------------------------------
     # _tif_to_numpy
     # -------------------------------------------------------------------------
-    def _tif_to_numpy(self, data_filenames, label_filenames, output_dir):
+    def _tif_to_numpy(self, data_filename, label_filename, output_dir):
         """
         Convert TIF to NP.
         """
-        for data_filename, label_filename in tqdm(
-                                    zip(data_filenames, label_filenames)):
+        # open the imagery
+        image = rxr.open_rasterio(data_filename).values
+        label = rxr.open_rasterio(label_filename).values
 
-            # open the imagery
-            image = rxr.open_rasterio(data_filename).values
-            label = rxr.open_rasterio(label_filename).values
+        if np.isnan(label).any():
+            return
 
-            if np.isnan(label).any():
-                continue
+        # get output filenames
+        image_output_dir = os.path.join(output_dir, 'images')
+        os.makedirs(image_output_dir, exist_ok=True)
 
-            # get output filenames
-            image_output_dir = os.path.join(output_dir, 'images')
-            os.makedirs(image_output_dir, exist_ok=True)
+        label_output_dir = os.path.join(output_dir, 'labels')
+        os.makedirs(label_output_dir, exist_ok=True)
 
-            label_output_dir = os.path.join(output_dir, 'labels')
-            os.makedirs(label_output_dir, exist_ok=True)
-
-            # save the new arrays
-            np.save(
-                os.path.join(
-                    image_output_dir,
-                    f'{Path(data_filename).stem}.npy'
-                ), image)
-            np.save(
-                os.path.join(
-                    label_output_dir,
-                    f'{Path(label_filename).stem}.npy'
-                ), label)
+        # save the new arrays
+        np.save(
+            os.path.join(
+                image_output_dir,
+                f'{Path(data_filename).stem}.npy'
+            ), image)
+        np.save(
+            os.path.join(
+                label_output_dir,
+                f'{Path(label_filename).stem}.npy'
+            ), label)
         return
 
     # -------------------------------------------------------------------------
@@ -105,36 +104,43 @@ class CHMPipeline(CNNRegression):
     def setup(self):
         """
         Convert .tif into numpy files.
-        TODO: Make it run in parallel, a tile per core.
         """
         # Get data and label filenames for training
         if self.conf.train_data_dir is not None:
+            p = Pool(processes=cpu_count())
             train_data_filenames = get_dataset_filenames(
                 self.conf.train_data_dir, ext='*.tif')
             train_label_filenames = get_dataset_filenames(
                 self.conf.train_label_dir, ext='*.tif')
             assert len(train_data_filenames) == len(train_label_filenames), \
                 'Number of data and label filenames do not match'
-            print(f'Converting {len(train_data_filenames)} tiles')
-            self._tif_to_numpy(
-                train_data_filenames,
-                train_label_filenames,
-                self.conf.data_dir
+            logging.info(f'{len(train_data_filenames)} files from TIF to NPY')
+            p.starmap(
+                self._tif_to_numpy,
+                zip(
+                    train_data_filenames,
+                    train_label_filenames,
+                    repeat(self.conf.data_dir)
+                )
             )
 
         # Get data and label filenames for training
         if self.conf.test_data_dir is not None:
+            p = Pool(processes=cpu_count())
             test_data_filenames = get_dataset_filenames(
                 self.conf.test_data_dir, ext='*.tif')
             test_label_filenames = get_dataset_filenames(
                 self.conf.test_label_dir, ext='*.tif')
             assert len(test_data_filenames) == len(test_label_filenames), \
                 'Number of data and label filenames do not match'
-            print(f'Converting {len(test_data_filenames)} tiles')
-            self._tif_to_numpy(
-                test_data_filenames,
-                test_label_filenames,
-                self.conf.test_dir
+            logging.info(f'{len(test_data_filenames)} files from TIF to NPY')
+            p.starmap(
+                self._tif_to_numpy,
+                zip(
+                    train_data_filenames,
+                    train_label_filenames,
+                    repeat(self.conf.test_dir)
+                )
             )
         return
 

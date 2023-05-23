@@ -6,16 +6,16 @@ experiment_type: cnn-chm-v1
 # directory that store train data
 train_data_dir: /explore/nobackup/people/mmacande/srlite/chm_model/20230515b_chm/train_images
 train_label_dir: /explore/nobackup/people/mmacande/srlite/chm_model/20230515b_chm/train_labels
-data_dir: '/explore/nobackup/people/jacaraba/projects/SRLite/regression-models/train_data'
+data_dir: '/explore/nobackup/people/${oc.env:USER}/projects/SRLite/regression-models/train_data'
 
 # directory that stores test data
 test_data_dir: /explore/nobackup/people/mmacande/srlite/chm_model/20230515b_chm/test_images
 test_label_dir: /explore/nobackup/people/mmacande/srlite/chm_model/20230515b_chm/test_labels
-test_dir: '/explore/nobackup/people/jacaraba/projects/SRLite/regression-models/test_data'
+test_dir: '/explore/nobackup/people/${oc.env:USER}/projects/SRLite/regression-models/test_data'
 
 #------------------------------------- General -------------------------------------#
 
-model_dir: '/explore/nobackup/people/jacaraba/projects/SRLite/regression-models'
+model_dir: '/explore/nobackup/people/${oc.env:USER}/projects/SRLite/regression-models'
 
 seed: 42
 gpu_devices: 0,1,2,3
@@ -92,4 +92,4 @@ prediction_nodata: -10001
 #model_filename: '/explore/nobackup/projects/ilab/projects/AIML_CHM/DEM_CHM/development/dem-test-v3/119-0.01.hdf5'
 inference_regex_list:
   - '/explore/nobackup/people/mmacande/srlite/chm_model/20230515b_chm/test_images/*.tif'
-inference_save_dir: /explore/nobackup/people/jacaraba/projects/SRLite/regression-models/output
+inference_save_dir: /explore/nobackup/people/${oc.env:USER}/projects/SRLite/regression-models/output
