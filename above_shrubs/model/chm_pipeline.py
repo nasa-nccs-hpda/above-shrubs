@@ -137,8 +137,8 @@ class CHMPipeline(CNNRegression):
             p.starmap(
                 self._tif_to_numpy,
                 zip(
-                    train_data_filenames,
-                    train_label_filenames,
+                    test_data_filenames,
+                    test_label_filenames,
                     repeat(self.conf.test_dir)
                 )
             )
