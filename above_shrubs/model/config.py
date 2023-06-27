@@ -14,3 +14,7 @@ class CHMConfig(Config):
     test_dir: Optional[str] = None
     test_data_dir: Optional[str] = None
     test_label_dir: Optional[str] = None
+
+    # filenames storing DTM and DSM
+    dtm_path: Optional[str] = None
+    dsm_path: Optional[str] = None
