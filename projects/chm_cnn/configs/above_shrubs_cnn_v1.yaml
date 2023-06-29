@@ -13,6 +13,9 @@ test_data_dir: /explore/nobackup/people/mmacande/srlite/chm_model/20230515b_chm/
 test_label_dir: /explore/nobackup/people/mmacande/srlite/chm_model/20230515b_chm/test_labels
 test_dir: '/explore/nobackup/people/${oc.env:USER}/projects/SRLite/regression-models/test_data'
 
+dtm_path: /explore/nobackup/projects/dem/AK_IFSAR/alaska_ifsar_dtm_20221222.tif
+dsm_path: /explore/nobackup/projects/dem/AK_IFSAR/alaska_ifsar_dsm_20221222.tif
+
 #------------------------------------- General -------------------------------------#
 
 model_dir: '/explore/nobackup/people/${oc.env:USER}/projects/SRLite/regression-models'
@@ -90,6 +93,9 @@ prediction_nodata: -10001
 
 # Prediction location
 #model_filename: '/explore/nobackup/projects/ilab/projects/AIML_CHM/DEM_CHM/development/dem-test-v3/119-0.01.hdf5'
+model_filename: /explore/nobackup/people/mmacande/srlite/chm_model/20230515d_chm/models/cnn-chm-v1-noAug-invSqrt/34-8.27.hdf5
 inference_regex_list:
-  - '/explore/nobackup/people/mmacande/srlite/chm_model/20230515b_chm/test_images/*.tif'
-inference_save_dir: /explore/nobackup/people/${oc.env:USER}/projects/SRLite/regression-models/output
+  #- '/explore/nobackup/people/mmacande/srlite/chm_model/20230515b_chm/test_images/*.tif'
+  #- '/explore/nobackup/projects/ilab/data/srlite/products/srlite_1.0.1/srlite/alaska/split_2/WV03_20180919_M1BS_104001004254C200-sr-02m.tif'
+  - '/explore/nobackup/people/pmontesa/userfs02/projects/ilab/above_shrubs/data/stacks/*/*_pred_stack.tif'
+inference_save_dir: /explore/nobackup/projects/ilab/projects/ABoVE-Shrubs/products/cnn-chm-v1-noAug-invSqrt

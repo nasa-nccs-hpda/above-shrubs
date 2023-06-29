@@ -1,16 +1,24 @@
 import os
+import re
+import time
 import logging
+import rasterio
 import numpy as np
+import xarray as xr
 import rioxarray as rxr
 from tqdm import tqdm
 from pathlib import Path
 from itertools import repeat
 from multiprocessing import Pool, cpu_count
+from pygeotools.lib import iolib, warplib, malib
 
 from tensorflow_caney.utils.system import set_gpu_strategy, \
     set_mixed_precision, set_xla, seed_everything
-from tensorflow_caney.utils.data import get_dataset_filenames, \
-    get_mean_std_dataset
+from tensorflow_caney.utils.data import read_dataset_csv, \
+    gen_random_tiles, modify_bands, normalize_image, rescale_image, \
+    modify_label_classes, get_dataset_filenames, get_mean_std_dataset, \
+    get_mean_std_metadata, read_metadata
+from tensorflow_caney.utils import indices
 from tensorflow_caney.utils.losses import get_loss
 from tensorflow_caney.utils.model import load_model, get_model
 from tensorflow_caney.utils.optimizers import get_optimizer
@@ -20,6 +28,8 @@ from tensorflow_caney.utils.data import get_mean_std_metadata, \
     standardize_image
 
 from tensorflow_caney.model.pipelines.cnn_regression import CNNRegression
+from tensorflow_caney.inference import regression_inference
+
 from above_shrubs.model.regression_dataloader import RegressionDataLoaderSRLite
 from above_shrubs.model.config import CHMConfig as Config
 
@@ -63,6 +73,40 @@ class CHMPipeline(CNNRegression):
 
         # Seed everything
         seed_everything(self.conf.seed)
+
+    # -------------------------------------------------------------------------
+    # _add_dtm
+    # -------------------------------------------------------------------------
+    def add_dtm(self, raster, dtm_filename):
+
+        fn1 = raster
+        fn2 = dtm_filename
+        ds_list = warplib.memwarp_multi_fn([fn1, fn2], res='first', extent='intersection', t_srs='first', r='cubic')
+        r1 = iolib.ds_getma(ds_list[0])
+        r2 = iolib.ds_getma(ds_list[1])
+        print(r1)
+        print(r2)
+        #rdiff = r1 - r2
+        #malib.print_stats(rdiff)
+        #out_fn = 'raster_diff.tif'
+        #iolib.writeGTiff(rdiff, out_fn, ds_list[0])
+        
+        """
+        dtm = rxr.open_rasterio(dtm_filename)
+        bounds = raster.rio.bounds()
+
+        dtm = dtm.rio.clip_box(
+            minx=bounds[0],
+            miny=bounds[1],
+            maxx=bounds[2],
+            maxy=bounds[3],
+            crs=raster.rio.crs.to_proj4(),
+        )
+        #print(dtm)
+        #dtm.clip(raster)
+        #print(dir(raster.rio))
+        #print(raster.rio.crs.to_proj4())
+        """
 
     # -------------------------------------------------------------------------
     # _tif_to_numpy
@@ -281,6 +325,195 @@ class CHMPipeline(CNNRegression):
         return
 
     # -------------------------------------------------------------------------
+    # predict
+    # -------------------------------------------------------------------------
+    def predict(self) -> None:
+
+        logging.info('Starting prediction stage')
+
+        # Load model for inference
+        model = load_model(
+            model_filename=self.conf.model_filename,
+            model_dir=self.model_dir
+        )
+
+        # Retrieve mean and std, there should be a more ideal place
+        if self.conf.standardization in ["global", "mixed"]:
+            mean, std = get_mean_std_metadata(
+                os.path.join(
+                    self.model_dir,
+                    f'mean-std-{self.conf.experiment_name}.csv'
+                )
+            )
+            logging.info(f'Mean: {mean}, Std: {std}')
+        else:
+            mean = None
+            std = None
+
+        # gather metadata
+        if self.conf.metadata_regex is not None:
+            metadata = read_metadata(
+                self.conf.metadata_regex,
+                self.conf.input_bands,
+                self.conf.output_bands
+            )
+
+        print("ENTRANDO READ FILENAME")
+
+        # Gather filenames to predict
+        if len(self.conf.inference_regex_list) > 0:
+            data_filenames = self.get_filenames(self.conf.inference_regex_list)
+        else:
+            data_filenames = self.get_filenames(self.conf.inference_regex)
+        logging.info(f'{len(data_filenames)} files to predict')
+
+        # iterate files, create lock file to avoid predicting the same file
+        for filename in sorted(data_filenames):
+
+            # start timer
+            start_time = time.time()
+
+            # set output directory
+            basename = os.path.basename(os.path.dirname(filename))
+            if basename == 'M1BS' or basename == 'P1BS':
+                basename = os.path.basename(
+                    os.path.dirname(os.path.dirname(filename)))
+
+            output_directory = os.path.join(
+                self.conf.inference_save_dir, basename)
+            os.makedirs(output_directory, exist_ok=True)
+
+            # set prediction output filename
+            output_filename = os.path.join(
+                output_directory,
+                f'{Path(filename).stem}.{self.conf.experiment_type}.tif')
+
+            print("OUTPUT_FILENAME", output_filename)
+
+            # lock file for multi-node, multi-processing
+            lock_filename = f'{output_filename}.lock'
+
+            # predict only if file does not exist and no lock file
+            if not os.path.isfile(output_filename) and \
+                    not os.path.isfile(lock_filename):
+
+                try:
+
+                    logging.info(f'Starting to predict {filename}')
+
+                    # if metadata is available
+                    if self.conf.metadata_regex is not None:
+
+                        # get timestamp from filename
+                        year_match = re.search(
+                            r'(\d{4})(\d{2})(\d{2})', filename)
+                        timestamp = str(int(year_match.group(2)))
+
+                        # get monthly values
+                        mean = metadata[timestamp]['median'].to_numpy()
+                        std = metadata[timestamp]['std'].to_numpy()
+                        self.conf.standardization = 'global'
+
+                    # create lock file
+                    # open(lock_filename, 'w').close()
+
+                    # open filename
+                    image = rxr.open_rasterio(filename)
+                    logging.info(f'Prediction shape: {image.shape}')
+
+                except rasterio.errors.RasterioIOError:
+                    logging.info(f'Skipped {filename}, probably corrupted.')
+                    continue
+
+                # Calculate indices and append to the original raster
+                image = indices.add_indices(
+                    xraster=image, input_bands=self.conf.input_bands,
+                    output_bands=self.conf.output_bands)
+
+                # Modify the bands to match inference details
+                image = modify_bands(
+                    xraster=image, input_bands=self.conf.input_bands,
+                    output_bands=self.conf.output_bands)
+                logging.info(f'Prediction shape after modf: {image.shape}')
+
+                # add DTM
+                #image = self.add_dtm(filename, self.conf.dtm_path)
+                #logging.info(f'Prediction shape after modf: {image.shape}')
+
+                # Transpose the image for channel last format
+                image = image.transpose("y", "x", "band")
+
+                # Remove no-data values to account for edge effects
+                temporary_tif = xr.where(image > -100, image, 600)
+
+                # Sliding window prediction
+                prediction = regression_inference.sliding_window_tiler(
+                    xraster=temporary_tif,
+                    model=model,
+                    n_classes=self.conf.n_classes,
+                    overlap=self.conf.inference_overlap,
+                    batch_size=self.conf.pred_batch_size,
+                    standardization=self.conf.standardization,
+                    mean=mean,
+                    std=std,
+                    normalize=self.conf.normalize,
+                    window=self.conf.window_algorithm
+                ) * self.conf.normalize_label
+                prediction[prediction < 0] = 0
+
+                # Drop image band to allow for a merge of mask
+                image = image.drop(
+                    dim="band",
+                    labels=image.coords["band"].values[1:],
+                )
+
+                # Get metadata to save raster
+                prediction = xr.DataArray(
+                    np.expand_dims(prediction, axis=-1),
+                    name=self.conf.experiment_type,
+                    coords=image.coords,
+                    dims=image.dims,
+                    attrs=image.attrs
+                )
+
+                # Add metadata to raster attributes
+                prediction.attrs['long_name'] = (self.conf.experiment_type)
+                prediction.attrs['model_name'] = (self.conf.model_filename)
+                prediction = prediction.transpose("band", "y", "x")
+
+                # Set nodata values on mask
+                nodata = prediction.rio.nodata
+                prediction = prediction.where(image != nodata)
+                prediction.rio.write_nodata(
+                    self.conf.prediction_nodata, encoded=True, inplace=True)
+
+                # Save output raster file to disk
+                prediction.rio.to_raster(
+                    output_filename,
+                    BIGTIFF="IF_SAFER",
+                    compress=self.conf.prediction_compress,
+                    driver=self.conf.prediction_driver,
+                    dtype=self.conf.prediction_dtype
+                )
+                del prediction
+
+                # delete lock file
+                try:
+                    os.remove(lock_filename)
+                except FileNotFoundError:
+                    logging.info(f'Lock file not found {lock_filename}')
+                    continue
+
+                logging.info(f'Finished processing {output_filename}')
+                logging.info(f"{(time.time() - start_time)/60} min")
+
+            # This is the case where the prediction was already saved
+            else:
+                logging.info(f'{output_filename} already predicted.')
+
+        return
+
+    # -------------------------------------------------------------------------
     # validate
     # -------------------------------------------------------------------------
     def validate(self) -> None:
@@ -356,6 +589,12 @@ class CHMPipeline(CNNRegression):
         test_labels = np.squeeze(test_labels)
         logging.info(f'Shape of predictions {predictions.shape}')
 
+        # gather some metrics
+        # RMSE
+        # R2
+        # MAE
+
+        # save output tiles
         for index, filename in tqdm(enumerate(test_data_filenames)):
 
             output_filename = os.path.join(
