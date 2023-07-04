@@ -445,8 +445,9 @@ class CHMPipeline(CNNRegression):
 
                 # add DTM
                 logging.info('Adding DTM layer')
-                image = self.add_dtm(filename, image, self.conf.dtm_path)
-                logging.info(f'Prediction shape after modf: {image.shape}')
+                if image.shape[0] != len(self.conf.output_bands):
+                    image = self.add_dtm(filename, image, self.conf.dtm_path)
+                    logging.info(f'Prediction shape after modf: {image.shape}')
 
                 # Transpose the image for channel last format
                 image = image.transpose("y", "x", "band")
