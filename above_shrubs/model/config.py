@@ -18,3 +18,6 @@ class CHMConfig(Config):
     # filenames storing DTM and DSM
     dtm_path: Optional[str] = None
     dsm_path: Optional[str] = None
+
+    # filenames storing cloud mask
+    cloudmask_path: Optional[str] = None

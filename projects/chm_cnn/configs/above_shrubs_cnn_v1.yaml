@@ -54,7 +54,7 @@ augment: True
 # standardization functions: local, global, mixed
 # global standardization
 # mixed standardization
-standardization: 'global'
+standardization: 'local'
 batch_size: 32
 n_classes: 1
 test_size: 0.20
@@ -89,13 +89,20 @@ pred_batch_size: 64
 inference_overlap: 0.50
 inference_treshold: 0.50
 prediction_dtype: float32
-prediction_nodata: -10001
+prediction_nodata: -9999
+
+cloudmask_path: '/explore/nobackup/projects/ilab/data/srlite/products/srlite_1.0.1/cloudmask/*'
 
 # Prediction location
 #model_filename: '/explore/nobackup/projects/ilab/projects/AIML_CHM/DEM_CHM/development/dem-test-v3/119-0.01.hdf5'
 model_filename: /explore/nobackup/people/mmacande/srlite/chm_model/20230515d_chm/models/cnn-chm-v1-noAug-invSqrt/34-8.27.hdf5
 inference_regex_list:
-  #- '/explore/nobackup/people/mmacande/srlite/chm_model/20230515b_chm/test_images/*.tif'
   #- '/explore/nobackup/projects/ilab/data/srlite/products/srlite_1.0.1/srlite/alaska/split_2/WV03_20180919_M1BS_104001004254C200-sr-02m.tif'
-  - '/explore/nobackup/people/pmontesa/userfs02/projects/ilab/above_shrubs/data/stacks/*/*_pred_stack.tif'
-inference_save_dir: /explore/nobackup/projects/ilab/projects/ABoVE-Shrubs/products/cnn-chm-v1-noAug-invSqrt
+  #- '/explore/nobackup/projects/ilab/data/srlite/products/srlite_1.0.1/srlite/alaska/split_7/WV02_20140522_M1BS_103001003103B100-sr-02m.tif'
+  #- '/explore/nobackup/people/pmontesa/userfs02/projects/ilab/above_shrubs/data/stacks/WV03_20150614_M1BS_104001000DD12A00-sr-02m/*_pred_stack.tif'
+  #- '/explore/nobackup/people/pmontesa/userfs02/projects/ilab/above_shrubs/data/stacks/*/*_pred_stack.tif'
+  #- '/explore/nobackup/people/pmontesa/userfs02/projects/ilab/above_shrubs/data/stacks/WV02_20140522_M1BS_103001003103B100-sr-02m/*_pred_stack.tif'
+  #- '/explore/nobackup/projects/ilab/data/srlite/products/srlite_1.0.1/srlite/alaska/split_8/WV02_20140707_M1BS_103001003368B700-sr-02m.tif'
+  #- '/explore/nobackup/projects/ilab/data/srlite/products/srlite_1.0.1/srlite/alaska/split_7/WV02_20130822_M1BS_1030010026054000-sr-02m.tif'
+  - '/explore/nobackup/projects/ilab/data/srlite/products/srlite_1.0.1/srlite/alaska/split_6/WV02_20100709_M1BS_1030010006AC3100-sr-02m.tif'
+inference_save_dir: /explore/nobackup/projects/ilab/projects/ABoVE-Shrubs/products/test2
