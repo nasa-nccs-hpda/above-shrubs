@@ -54,7 +54,7 @@ augment: True
 # standardization functions: local, global, mixed
 # global standardization
 # mixed standardization
-standardization: 'local'
+standardization: 'global'
 batch_size: 32
 n_classes: 1
 test_size: 0.20
@@ -85,13 +85,13 @@ callbacks:
 #------------------------------------- Inference -------------------------------------#
 
 window_size: 10000
-pred_batch_size: 64
+pred_batch_size: 128
 inference_overlap: 0.50
 inference_treshold: 0.50
 prediction_dtype: float32
 prediction_nodata: -9999
 
-cloudmask_path: '/explore/nobackup/projects/ilab/data/srlite/products/srlite_1.0.1/cloudmask/*'
+cloudmask_path: '/explore/nobackup/projects/ilab/data/srlite/products/srlite_1.0.1/cloudmask/*/*'
 
 # Prediction location
 #model_filename: '/explore/nobackup/projects/ilab/projects/AIML_CHM/DEM_CHM/development/dem-test-v3/119-0.01.hdf5'
@@ -104,5 +104,7 @@ inference_regex_list:
   #- '/explore/nobackup/people/pmontesa/userfs02/projects/ilab/above_shrubs/data/stacks/WV02_20140522_M1BS_103001003103B100-sr-02m/*_pred_stack.tif'
   #- '/explore/nobackup/projects/ilab/data/srlite/products/srlite_1.0.1/srlite/alaska/split_8/WV02_20140707_M1BS_103001003368B700-sr-02m.tif'
   #- '/explore/nobackup/projects/ilab/data/srlite/products/srlite_1.0.1/srlite/alaska/split_7/WV02_20130822_M1BS_1030010026054000-sr-02m.tif'
-  - '/explore/nobackup/projects/ilab/data/srlite/products/srlite_1.0.1/srlite/alaska/split_6/WV02_20100709_M1BS_1030010006AC3100-sr-02m.tif'
+  #- '/explore/nobackup/projects/ilab/data/srlite/products/srlite_1.0.1/srlite/alaska/split_6/WV02_20100709_M1BS_1030010006AC3100-sr-02m.tif'
+  - '/explore/nobackup/projects/ilab/projects/ABoVE-Shrubs/data/list_srlite_path_for_predstack.csv'
+#inference_save_dir: /explore/nobackup/projects/ilab/projects/ABoVE-Shrubs/products/cnn-chm-v2-noAug-invSqrt
 inference_save_dir: /explore/nobackup/projects/ilab/projects/ABoVE-Shrubs/products/test2
