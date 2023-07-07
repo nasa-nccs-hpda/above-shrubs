@@ -32,10 +32,10 @@ def main():
                         dest='pipeline_step',
                         help='Pipeline step to perform',
                         default=[
-                            'setup', 'preprocess',
+                            'all', 'setup', 'preprocess',
                             'train', 'predict', 'validate'],
                         choices=[
-                            'setup', 'preprocess',
+                            'all', 'setup', 'preprocess',
                             'train', 'predict', 'validate'])
 
     args = parser.parse_args()
@@ -47,15 +47,15 @@ def main():
     pipeline = CHMPipeline(args.config_file)
 
     # Regression CHM pipeline steps
-    if "setup" in args.pipeline_step:
+    if "setup" in args.pipeline_step or "all" in args.pipeline_step:
         pipeline.setup()
-    if "preprocess" in args.pipeline_step:
+    if "preprocess" in args.pipeline_step or "all" in args.pipeline_step:
         pipeline.preprocess()
-    if "train" in args.pipeline_step:
+    if "train" in args.pipeline_step or "all" in args.pipeline_step:
         pipeline.train()
-    if "predict" in args.pipeline_step:
+    if "predict" in args.pipeline_step or "all" in args.pipeline_step:
         pipeline.predict()
-    if "validate" in args.pipeline_step:
+    if "validate" in args.pipeline_step or "all" in args.pipeline_step:
         pipeline.validate()
 
     logging.info(f'Took {(time.time()-timer)/60.0:.2f} min.')

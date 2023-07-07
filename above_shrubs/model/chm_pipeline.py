@@ -4,13 +4,21 @@ import time
 import logging
 import rasterio
 import numpy as np
+import pandas as pd
 import xarray as xr
 from tqdm import tqdm
+from glob import glob
+import tensorflow as tf
 import rioxarray as rxr
 from pathlib import Path
 from itertools import repeat
+from tensorflow.data import Dataset
 from pygeotools.lib import iolib, warplib
 from multiprocessing import Pool, cpu_count
+from omegaconf.listconfig import ListConfig
+
+from sklearn.metrics import r2_score, mean_absolute_error, \
+    mean_squared_error, mean_absolute_percentage_error
 
 from tensorflow_caney.utils.system import set_gpu_strategy, \
     set_mixed_precision, set_xla, seed_everything
@@ -29,6 +37,10 @@ from tensorflow_caney.inference import regression_inference
 
 from above_shrubs.model.regression_dataloader import RegressionDataLoaderSRLite
 from above_shrubs.model.config import CHMConfig as Config
+
+for gpu in tf.config.list_physical_devices('GPU'):
+    tf.config.experimental.set_memory_growth(gpu, True)
+
 
 CHUNKS = {'band': 'auto', 'x': 'auto', 'y': 'auto'}
 xp = np
@@ -118,6 +130,26 @@ class CHMPipeline(CNNRegression):
         return raster
 
     # -------------------------------------------------------------------------
+    # Getters
+    # -------------------------------------------------------------------------
+    def get_filenames(self, data_regex: str) -> list:
+        """
+        Get filename from list of regexes
+        """
+        # get the paths/filenames of the regex
+        filenames = []
+        if isinstance(data_regex, list) or isinstance(data_regex, ListConfig):
+            for regex in data_regex:
+                if regex[-3:] == 'csv':
+                    filenames.extend(pd.read_csv(regex).iloc[:, 0].tolist())
+                else:
+                    filenames.extend(glob(regex))
+        else:
+            filenames = glob(data_regex)
+        assert len(filenames) > 0, f'No files under {data_regex}'
+        return sorted(filenames)
+
+    # -------------------------------------------------------------------------
     # _tif_to_numpy
     # -------------------------------------------------------------------------
     def _tif_to_numpy(self, data_filename, label_filename, output_dir):
@@ -150,6 +182,14 @@ class CHMPipeline(CNNRegression):
                 f'{Path(label_filename).stem}.npy'
             ), label)
         return
+
+    # -------------------------------------------------------------------------
+    # _xbatch
+    # -------------------------------------------------------------------------
+    def _xbatch(self, iterable, batch_size=1):
+        iter = len(iterable)
+        for ndx in range(0, iter, batch_size):
+            yield iterable[ndx:min(ndx + batch_size, iter)]
 
     # -------------------------------------------------------------------------
     # setup
@@ -381,13 +421,8 @@ class CHMPipeline(CNNRegression):
             start_time = time.time()
 
             # set output directory
-            basename = os.path.basename(os.path.dirname(filename))
-            if basename == 'M1BS' or basename == 'P1BS':
-                basename = os.path.basename(
-                    os.path.dirname(os.path.dirname(filename)))
-
             output_directory = os.path.join(
-                self.conf.inference_save_dir, basename)
+                self.conf.inference_save_dir, Path(filename).stem)
             os.makedirs(output_directory, exist_ok=True)
 
             # set prediction output filename
@@ -580,54 +615,110 @@ class CHMPipeline(CNNRegression):
         # create array with data to predict
         test_data = []
         test_labels = []
+        test_filenames = []
         for data_filename, label_filename in \
-                zip(test_data_filenames, test_label_filenames):
+                tqdm(zip(test_data_filenames, test_label_filenames)):
 
             # read data
             test_data_tile = np.moveaxis(
                 np.load(data_filename), 0, -1)
-            if self.conf.standardization is not None:
-                test_data_tile = standardize_image(
-                    test_data_tile, self.conf.standardization,
-                    mean, std
-                )
+
+            # continue if no-data present
+            if np.isnan(test_data_tile).any():
+                continue
 
             # read label
             test_data_label = np.load(label_filename)
 
+            # continue if no-data present
+            if np.isnan(test_data_label).any():
+                continue
+
             test_data.append(test_data_tile)
             test_labels.append(test_data_label)
+            test_filenames.append(data_filename)
+
+        # if there are no tiles by the end of the iteration
+        assert len(test_data) > 0, 'No tiles no validate. Check for no-data.'
 
         # create array and reshape it
         test_data = np.array(test_data)
         test_labels = np.moveaxis(np.array(test_labels), 1, -1)
         logging.info(f'Reshaped data: {test_data.shape}, {test_labels.shape}')
 
+        # score of how much data is left after no-data filtering
+        tile_percentage = test_data.shape[0] / len(test_data_filenames) * 100
+        logging.info(
+            f'{tile_percentage}% of tiles used for validation after filtering')
+
+        # prediction loop, do prediction in batches of data
+        predictions = []
+        for batch_i in self._xbatch(
+                test_data, batch_size=self.conf.pred_batch_size):
+
+            # standardize
+            batch = batch_i.copy()
+
+            if self.conf.standardization is not None:
+                for item in range(batch.shape[0]):
+                    batch[item, :, :, :] = standardize_image(
+                        batch[item, :, :, :],
+                        self.conf.standardization, mean, std)
+
+            # predict
+            batch = model.predict(
+                batch, batch_size=self.conf.pred_batch_size, verbose=1)
+            predictions.append(batch)
+
+        # create prediction array
+        predictions = np.concatenate(predictions, axis=0)
+        logging.info(f'Finished prediction for {predictions.shape[0]} tiles.')
+
         # perform prediction
-        predictions = model.predict(
-            test_data, batch_size=self.conf.pred_batch_size)
-        logging.info(f'Shape after prediction {predictions.shape}')
+        with tf.device("CPU"):
+            dataset = Dataset.from_tensor_slices(
+                (test_data, test_labels)).batch(self.conf.pred_batch_size)
 
-        results = model.evaluate(
-            test_data, test_labels, batch_size=self.conf.pred_batch_size)
-        logging.info(f'Results output: {results}')
+        logging.info('Starting model evaluation.')
+        results = model.evaluate(dataset)
 
+        logging.info("======= TensorFLow Metrics =======")
+        logging.info(f'Test Loss: {results[0]}')
+        logging.info(f'Test MSE: {results[1]}')
+        logging.info(f'Test RMSE: {results[2]}')
+        logging.info(f'Test MAE: {results[3]}')
+        logging.info(f'Test R2: {results[4]}')
+
+        # squeeze the last dimension of the predictions
         predictions = np.squeeze(predictions)
         test_labels = np.squeeze(test_labels)
         logging.info(f'Shape of predictions {predictions.shape}')
 
+        # Reshape for sckit-learn metrics
+        nsamples, nx, ny = predictions.shape
+        predictions = predictions.reshape((nsamples, nx * ny))
+        test_labels = test_labels.reshape((nsamples, nx * ny))
+
         # gather some metrics
-        # RMSE
-        # R2
-        # MAE
+        logging.info("======= SckitLearn Metrics =======")
+        logging.info(f'R2: {r2_score(predictions, test_labels)}')
+        logging.info(f'MAE: {mean_absolute_error(predictions, test_labels)}')
+        logging.info(f'MSE: {mean_squared_error(predictions, test_labels)}')
+        logging.info(
+            f'MAPE: {mean_absolute_percentage_error(predictions, test_labels)}'
+        )
 
         # save output tiles
-        for index, filename in tqdm(enumerate(test_data_filenames)):
+        predictions = predictions.reshape((nsamples, nx, ny))
+        logging.info(f'Reshaped predictions back to {predictions.shape}')
 
+        for index, filename in tqdm(enumerate(test_filenames)):
             output_filename = os.path.join(
                 self.conf.inference_save_dir,
                 f'{Path(filename).stem}.npy'
             )
             np.save(output_filename, predictions[index, :, :])
+
+        logging.info(f'Saved predictions to {self.conf.inference_save_dir}')
 
         return
