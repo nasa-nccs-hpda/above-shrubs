@@ -4,34 +4,43 @@ import time
 import logging
 import rasterio
 import numpy as np
+import pandas as pd
 import xarray as xr
-import rioxarray as rxr
 from tqdm import tqdm
+from glob import glob
+import tensorflow as tf
+import rioxarray as rxr
 from pathlib import Path
 from itertools import repeat
+from tensorflow.data import Dataset
+from pygeotools.lib import iolib, warplib
 from multiprocessing import Pool, cpu_count
-from pygeotools.lib import iolib, warplib, malib
+from omegaconf.listconfig import ListConfig
+
+from sklearn.metrics import r2_score, mean_absolute_error, \
+    mean_squared_error, mean_absolute_percentage_error
 
 from tensorflow_caney.utils.system import set_gpu_strategy, \
     set_mixed_precision, set_xla, seed_everything
-from tensorflow_caney.utils.data import read_dataset_csv, \
-    gen_random_tiles, modify_bands, normalize_image, rescale_image, \
-    modify_label_classes, get_dataset_filenames, get_mean_std_dataset, \
-    get_mean_std_metadata, read_metadata
+from tensorflow_caney.utils.data import modify_bands, \
+    get_dataset_filenames, get_mean_std_dataset, \
+    get_mean_std_metadata, read_metadata, standardize_image
 from tensorflow_caney.utils import indices
 from tensorflow_caney.utils.losses import get_loss
 from tensorflow_caney.utils.model import load_model, get_model
 from tensorflow_caney.utils.optimizers import get_optimizer
 from tensorflow_caney.utils.metrics import get_metrics
 from tensorflow_caney.utils.callbacks import get_callbacks
-from tensorflow_caney.utils.data import get_mean_std_metadata, \
-    standardize_image
 
 from tensorflow_caney.model.pipelines.cnn_regression import CNNRegression
 from tensorflow_caney.inference import regression_inference
 
 from above_shrubs.model.regression_dataloader import RegressionDataLoaderSRLite
 from above_shrubs.model.config import CHMConfig as Config
+
+for gpu in tf.config.list_physical_devices('GPU'):
+    tf.config.experimental.set_memory_growth(gpu, True)
+
 
 CHUNKS = {'band': 'auto', 'x': 'auto', 'y': 'auto'}
 xp = np
@@ -75,38 +84,70 @@ class CHMPipeline(CNNRegression):
         seed_everything(self.conf.seed)
 
     # -------------------------------------------------------------------------
-    # _add_dtm
+    # add_dtm
     # -------------------------------------------------------------------------
-    def add_dtm(self, raster, dtm_filename):
+    def add_dtm(self, raster_filename, raster, dtm_filename):
 
-        fn1 = raster
-        fn2 = dtm_filename
-        ds_list = warplib.memwarp_multi_fn([fn1, fn2], res='first', extent='intersection', t_srs='first', r='cubic')
-        r1 = iolib.ds_getma(ds_list[0])
-        r2 = iolib.ds_getma(ds_list[1])
-        print(r1)
-        print(r2)
-        #rdiff = r1 - r2
-        #malib.print_stats(rdiff)
-        #out_fn = 'raster_diff.tif'
-        #iolib.writeGTiff(rdiff, out_fn, ds_list[0])
-        
-        """
-        dtm = rxr.open_rasterio(dtm_filename)
-        bounds = raster.rio.bounds()
-
-        dtm = dtm.rio.clip_box(
-            minx=bounds[0],
-            miny=bounds[1],
-            maxx=bounds[2],
-            maxy=bounds[3],
-            crs=raster.rio.crs.to_proj4(),
+        # warp dtm to match raster
+        warp_ds_list = warplib.memwarp_multi_fn(
+            [raster_filename, dtm_filename], res=raster_filename,
+            extent=raster_filename, t_srs=raster_filename, r='average',
+            dst_ndv=int(raster.rio.nodata), verbose=False
         )
-        #print(dtm)
-        #dtm.clip(raster)
-        #print(dir(raster.rio))
-        #print(raster.rio.crs.to_proj4())
+        dtm_ma = iolib.ds_getma(warp_ds_list[1])
+
+        # Drop image band to allow for a merge of mask
+        dtm = raster.drop(
+            dim="band",
+            labels=raster.coords["band"].values[1:],
+        )
+        dtm.coords['band'] = [raster.shape[0] + 1]
+
+        # Get metadata to save raster
+        dtm = xr.DataArray(
+            np.expand_dims(dtm_ma, axis=0),
+            name='dtm',
+            coords=dtm.coords,
+            dims=dtm.dims,
+            attrs=dtm.attrs
+        ).fillna(raster.rio.nodata)
+        dtm = dtm.where(raster[0, :, :] > 0, int(raster.rio.nodata))
+
+        # concatenate the bands together
+        dtm = xr.concat([raster, dtm], dim="band")
+        dtm = dtm.where(dtm > 0, int(raster.rio.nodata))
+
+        # additional clean-up for the imagery
+        dtm.where(
+            dtm.any(dim = 'band') != True, int(raster.rio.nodata))
+        dtm = dtm.where(dtm > 0, int(raster.rio.nodata))
+        dtm.attrs['long_name'] = dtm.attrs['long_name'] + ("DTM",)
+        return dtm
+
+    def add_cloudmask(self, raster, cloudmask_filename):
+        cloud_raster = rxr.open_rasterio(cloudmask_filename)
+        raster = raster.where(cloud_raster[0, :, :] == 0, -9999)
+        return raster
+
+    # -------------------------------------------------------------------------
+    # Getters
+    # -------------------------------------------------------------------------
+    def get_filenames(self, data_regex: str) -> list:
         """
+        Get filename from list of regexes
+        """
+        # get the paths/filenames of the regex
+        filenames = []
+        if isinstance(data_regex, list) or isinstance(data_regex, ListConfig):
+            for regex in data_regex:
+                if regex[-3:] == 'csv':
+                    filenames.extend(pd.read_csv(regex).iloc[:, 0].tolist())
+                else:
+                    filenames.extend(glob(regex))
+        else:
+            filenames = glob(data_regex)
+        assert len(filenames) > 0, f'No files under {data_regex}'
+        return sorted(filenames)
 
     # -------------------------------------------------------------------------
     # _tif_to_numpy
@@ -141,6 +182,14 @@ class CHMPipeline(CNNRegression):
                 f'{Path(label_filename).stem}.npy'
             ), label)
         return
+
+    # -------------------------------------------------------------------------
+    # _xbatch
+    # -------------------------------------------------------------------------
+    def _xbatch(self, iterable, batch_size=1):
+        iter = len(iterable)
+        for ndx in range(0, iter, batch_size):
+            yield iterable[ndx:min(ndx + batch_size, iter)]
 
     # -------------------------------------------------------------------------
     # setup
@@ -358,8 +407,6 @@ class CHMPipeline(CNNRegression):
                 self.conf.output_bands
             )
 
-        print("ENTRANDO READ FILENAME")
-
         # Gather filenames to predict
         if len(self.conf.inference_regex_list) > 0:
             data_filenames = self.get_filenames(self.conf.inference_regex_list)
@@ -374,21 +421,14 @@ class CHMPipeline(CNNRegression):
             start_time = time.time()
 
             # set output directory
-            basename = os.path.basename(os.path.dirname(filename))
-            if basename == 'M1BS' or basename == 'P1BS':
-                basename = os.path.basename(
-                    os.path.dirname(os.path.dirname(filename)))
-
             output_directory = os.path.join(
-                self.conf.inference_save_dir, basename)
+                self.conf.inference_save_dir, Path(filename).stem)
             os.makedirs(output_directory, exist_ok=True)
 
             # set prediction output filename
             output_filename = os.path.join(
                 output_directory,
                 f'{Path(filename).stem}.{self.conf.experiment_type}.tif')
-
-            print("OUTPUT_FILENAME", output_filename)
 
             # lock file for multi-node, multi-processing
             lock_filename = f'{output_filename}.lock'
@@ -415,7 +455,7 @@ class CHMPipeline(CNNRegression):
                         self.conf.standardization = 'global'
 
                     # create lock file
-                    # open(lock_filename, 'w').close()
+                    open(lock_filename, 'w').close()
 
                     # open filename
                     image = rxr.open_rasterio(filename)
@@ -426,25 +466,29 @@ class CHMPipeline(CNNRegression):
                     continue
 
                 # Calculate indices and append to the original raster
+                logging.info('Adding indices')
                 image = indices.add_indices(
                     xraster=image, input_bands=self.conf.input_bands,
                     output_bands=self.conf.output_bands)
 
                 # Modify the bands to match inference details
+                logging.info('Modifying bands')
                 image = modify_bands(
                     xraster=image, input_bands=self.conf.input_bands,
                     output_bands=self.conf.output_bands)
                 logging.info(f'Prediction shape after modf: {image.shape}')
 
                 # add DTM
-                #image = self.add_dtm(filename, self.conf.dtm_path)
-                #logging.info(f'Prediction shape after modf: {image.shape}')
+                logging.info('Adding DTM layer')
+                if image.shape[0] != len(self.conf.output_bands):
+                    image = self.add_dtm(filename, image, self.conf.dtm_path)
+                    logging.info(f'Prediction shape after modf: {image.shape}')
 
                 # Transpose the image for channel last format
                 image = image.transpose("y", "x", "band")
 
                 # Remove no-data values to account for edge effects
-                temporary_tif = xr.where(image > -100, image, 600)
+                temporary_tif = xr.where(image > -100, image, 2000)
 
                 # Sliding window prediction
                 prediction = regression_inference.sliding_window_tiler(
@@ -480,6 +524,24 @@ class CHMPipeline(CNNRegression):
                 prediction.attrs['long_name'] = (self.conf.experiment_type)
                 prediction.attrs['model_name'] = (self.conf.model_filename)
                 prediction = prediction.transpose("band", "y", "x")
+
+                # Add cloudmask to the prediction
+                if self.conf.cloudmask_path is not None:
+                    cloudmask_filename = self.get_filenames(
+                        os.path.join(
+                            self.conf.cloudmask_path,
+                            f'{Path(filename).stem.split("-")[0]}*.tif'
+                        )
+                    )
+
+                    # if we found cloud mask filename, proceed
+                    if len(cloudmask_filename) > 0:
+                        prediction = self.add_cloudmask(
+                            prediction, cloudmask_filename[0])
+                    else:
+                        logging.info(
+                            'No cloud mask filename found, ' +
+                            'skipping cloud mask step.')
 
                 # Set nodata values on mask
                 nodata = prediction.rio.nodata
@@ -553,54 +615,110 @@ class CHMPipeline(CNNRegression):
         # create array with data to predict
         test_data = []
         test_labels = []
+        test_filenames = []
         for data_filename, label_filename in \
-                zip(test_data_filenames, test_label_filenames):
+                tqdm(zip(test_data_filenames, test_label_filenames)):
 
             # read data
             test_data_tile = np.moveaxis(
                 np.load(data_filename), 0, -1)
-            if self.conf.standardization is not None:
-                test_data_tile = standardize_image(
-                    test_data_tile, self.conf.standardization,
-                    mean, std
-                )
+
+            # continue if no-data present
+            if np.isnan(test_data_tile).any():
+                continue
 
             # read label
             test_data_label = np.load(label_filename)
 
+            # continue if no-data present
+            if np.isnan(test_data_label).any():
+                continue
+
             test_data.append(test_data_tile)
             test_labels.append(test_data_label)
+            test_filenames.append(data_filename)
+
+        # if there are no tiles by the end of the iteration
+        assert len(test_data) > 0, 'No tiles no validate. Check for no-data.'
 
         # create array and reshape it
         test_data = np.array(test_data)
         test_labels = np.moveaxis(np.array(test_labels), 1, -1)
         logging.info(f'Reshaped data: {test_data.shape}, {test_labels.shape}')
 
+        # score of how much data is left after no-data filtering
+        tile_percentage = test_data.shape[0] / len(test_data_filenames) * 100
+        logging.info(
+            f'{tile_percentage}% of tiles used for validation after filtering')
+
+        # prediction loop, do prediction in batches of data
+        predictions = []
+        for batch_i in self._xbatch(
+                test_data, batch_size=self.conf.pred_batch_size):
+
+            # standardize
+            batch = batch_i.copy()
+
+            if self.conf.standardization is not None:
+                for item in range(batch.shape[0]):
+                    batch[item, :, :, :] = standardize_image(
+                        batch[item, :, :, :],
+                        self.conf.standardization, mean, std)
+
+            # predict
+            batch = model.predict(
+                batch, batch_size=self.conf.pred_batch_size, verbose=1)
+            predictions.append(batch)
+
+        # create prediction array
+        predictions = np.concatenate(predictions, axis=0)
+        logging.info(f'Finished prediction for {predictions.shape[0]} tiles.')
+
         # perform prediction
-        predictions = model.predict(
-            test_data, batch_size=self.conf.pred_batch_size)
-        logging.info(f'Shape after prediction {predictions.shape}')
+        with tf.device("CPU"):
+            dataset = Dataset.from_tensor_slices(
+                (test_data, test_labels)).batch(self.conf.pred_batch_size)
 
-        results = model.evaluate(
-            test_data, test_labels, batch_size=self.conf.pred_batch_size)
-        logging.info(f'Results output: {results}')
+        logging.info('Starting model evaluation.')
+        results = model.evaluate(dataset)
 
+        logging.info("======= TensorFLow Metrics =======")
+        logging.info(f'Test Loss: {results[0]}')
+        logging.info(f'Test MSE: {results[1]}')
+        logging.info(f'Test RMSE: {results[2]}')
+        logging.info(f'Test MAE: {results[3]}')
+        logging.info(f'Test R2: {results[4]}')
+
+        # squeeze the last dimension of the predictions
         predictions = np.squeeze(predictions)
         test_labels = np.squeeze(test_labels)
         logging.info(f'Shape of predictions {predictions.shape}')
 
+        # Reshape for sckit-learn metrics
+        nsamples, nx, ny = predictions.shape
+        predictions = predictions.reshape((nsamples, nx * ny))
+        test_labels = test_labels.reshape((nsamples, nx * ny))
+
         # gather some metrics
-        # RMSE
-        # R2
-        # MAE
+        logging.info("======= SckitLearn Metrics =======")
+        logging.info(f'R2: {r2_score(predictions, test_labels)}')
+        logging.info(f'MAE: {mean_absolute_error(predictions, test_labels)}')
+        logging.info(f'MSE: {mean_squared_error(predictions, test_labels)}')
+        logging.info(
+            f'MAPE: {mean_absolute_percentage_error(predictions, test_labels)}'
+        )
 
         # save output tiles
-        for index, filename in tqdm(enumerate(test_data_filenames)):
+        predictions = predictions.reshape((nsamples, nx, ny))
+        logging.info(f'Reshaped predictions back to {predictions.shape}')
 
+        for index, filename in tqdm(enumerate(test_filenames)):
             output_filename = os.path.join(
                 self.conf.inference_save_dir,
                 f'{Path(filename).stem}.npy'
             )
             np.save(output_filename, predictions[index, :, :])
+
+        logging.info(f'Saved predictions to {self.conf.inference_save_dir}')
 
         return

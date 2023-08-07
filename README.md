@@ -2,6 +2,9 @@
 
 Development of regression deep learning models for ABoVE Shrubs project.
 
+[![DOI](https://zenodo.org/badge/627911660.svg)](https://zenodo.org/badge/latestdoi/627911660)
+
+
 ## Getting Started
 
 1. SSH to ADAPT Login
