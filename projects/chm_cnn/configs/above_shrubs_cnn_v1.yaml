@@ -81,6 +81,8 @@ callbacks:
   - "tf.keras.callbacks.ReduceLROnPlateau(monitor='val_loss', factor=0.1, patience=5)"
   - "tf.keras.callbacks.EarlyStopping(monitor='val_loss', patience=5, restore_best_weights=False)"
   - "tf.keras.callbacks.TerminateOnNaN()"
+  - "tf.keras.callbacks.CSVLogger('${model_dir}/${experiment_name}.csv')"
+  - "tf.keras.callbacks.BackupAndRestore('${model_dir}/backup')"
 
 #------------------------------------- Inference -------------------------------------#
 
