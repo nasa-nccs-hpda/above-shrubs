@@ -20,7 +20,7 @@ def gdal_merge_gtiff_stack(out_fn, fn_sr, fn_warp_dtm, GDAL_MERGE_PATH = '/panfs
     print(out)
     return proc.returncode, out_fn
 
-def do_stack(fn_sr, dtm_path, outdir):
+def do_pred_stack(fn_sr, dtm_path, outdir):
 
     GDAL_MERGE_PATH = '/panfs/ccds02/app/modules/anaconda/platform/x86_64/rhel/8.6/3-2022.05/envs/ilab-tensorflow/bin/'
     
@@ -31,7 +31,9 @@ def do_stack(fn_sr, dtm_path, outdir):
     if not os.path.exists(outdir_stack): os.makedirs(outdir_stack)
     
     # Warp the DTM to the SRlite
-    warp_ds_list = warplib.diskwarp_multi_fn([fn_sr, dtm_path], res=fn_sr, extent=fn_sr, t_srs=fn_sr, r='average', dst_ndv=-10001, outdir=outdir_stack, verbose=False)
+    warp_ds_list = warplib.diskwarp_multi_fn([fn_sr, dtm_path], res=fn_sr, extent=fn_sr, t_srs=fn_sr, r='bicubic', dst_ndv=-10001, outdir=outdir_stack, verbose=False)
+    
+    # Need to apply common mask before saving
     
     # Get the full path of the warped DTM
     fn_warp_dtm = os.path.join(outdir, f, os.path.basename(dtm_path).replace('.tif', '_warp.tif'))
@@ -52,38 +54,49 @@ def do_stack(fn_sr, dtm_path, outdir):
     
     return out_fn
 
-def validate_chm_pred(pred_fn, lvis_fn, index_of_scaling = 0, scale_factor=0.1, CHM_LIMS=(0,15), RES=30, SRC_NAME='CNN CHM'):
+def validate_chm_pred(pred_fn, lvis_fn, index_of_scaling = 0, scale_factor=0.1, CHM_LIMS=(0,15), TCC_LIMS=(0,100), RES=30, SRC_NAME='CNN CHM', RETURN_DF=False, DST_NDV=-9999, DEBUG=False):
     
     '''Validate a predicted CHM with LVIS'''
     
     # This order is important
-    fn_list = [pred_fn, lvis_fn]
+    lvis_tcc_fn = lvis_fn.replace('_RH098_mean_30m.tif','_CC_gte_01p37m_30m.tif')
+    fn_list = [pred_fn, lvis_fn, lvis_tcc_fn]
+    
+    if DEBUG: [print(os.path.basename(fn)) for fn in fn_list]
+
     
     # ---Doing the warp ---
     # Here, the warped datasets and their arrays in these lists will be in the same order as your initial filenames list (fn_list)
-    warp_ds_list = warplib.memwarp_multi_fn(fn_list, res=RES, extent='intersection', t_srs=lvis_fn, r='near', dst_ndv=-9999, verbose=False)
+    warp_ds_list = warplib.memwarp_multi_fn(fn_list, res=RES, extent='intersection', t_srs=lvis_fn, r='near', dst_ndv=DST_NDV, verbose=False)
     warp_ma_list = [iolib.ds_getma(ds) for ds in warp_ds_list]
+    
+    if DEBUG: print(f'Length of warp ma list: {len(warp_ma_list)}')
     
     # Scale preds in decimeters to meters
     for i, ma in enumerate(warp_ma_list): 
+        if DEBUG: print(f'Warped ma min, max: {np.nanmin(ma)}, {np.nanmax(ma)}')
         if i == index_of_scaling: 
-            print(f'Mean (orig): {warp_ma_list[i].mean()}')
+            #print(f'Mean (orig): {warp_ma_list[i].mean()}')
             warp_ma_list[i] = ma * scale_factor
-            print(f'Mean (scaled): {warp_ma_list[i].mean()}')
+            #print(f'Mean (scaled): {warp_ma_list[i].mean()}')
             
     # Common mask
-    print('Common mask: masking negative and 0 values in each input...')
-    warp_valid_ma_list = [ np.ma.masked_where(ma <= 0, np.ma.masked_invalid(ma)) for ma in warp_ma_list]
+    ##print('Common mask: masking negative and 0 values in each input...')
+    #warp_valid_ma_list = [ np.ma.masked_where(ma <= 0, np.ma.masked_invalid(ma)) for ma in warp_ma_list]
+    warp_valid_ma_list = [ np.ma.masked_where(ma == DST_NDV, np.ma.masked_invalid(ma)) for ma in warp_ma_list]
     common_mask = malib.common_mask(warp_valid_ma_list)
     warp_ma_masked_list = [np.ma.array(ma, mask=common_mask) for ma in warp_ma_list]
-
-    plot_maps(warp_ma_masked_list, fn_list, clim_list = [CHM_LIMS, CHM_LIMS], title_text = '', map_label='Height [m]', figsize=(12,3))
-    plot_hists(warp_ma_masked_list, fn_list,  title_text = '', figsize=(12,3)),
-    df_ht = None
-    df_ht = plot_scatter(warp_ma_masked_list, SRC_NAME, RES, (5,5), RETURN_DF=True)
-    plot_diff_map(warp_ma_masked_list, SRC_NAME, clim_list = [(-10,10)])
-                  
-    return df_ht
+    
+    if DEBUG: [print(f'Warped ma masked min, max: {np.nanmin(ma)}, {np.nanmax(ma)}') for i, ma in enumerate(warp_ma_masked_list)]
+        
+    if RETURN_DF:
+        return build_pred_obs(warp_ma_masked_list, RETURN_DF=True)
+    else:
+        # Do plots
+        plot_maps(warp_ma_masked_list[0:2], fn_list, clim_list = [CHM_LIMS, CHM_LIMS, TCC_LIMS], title_text = '', map_label='Height [m]', figsize=(12,3))
+        plot_hists(warp_ma_masked_list[0:2], fn_list,  title_text = '', figsize=(12,3)),
+        plot_scatter(warp_ma_masked_list[0:2], SRC_NAME, RES, (5,5))
+        plot_diff_map(warp_ma_masked_list[0:2], SRC_NAME, clim_list = [(-10,10)])
     
 def plot_maps(masked_array_list, names_list, figsize=None, cmap_list=None, clim_list=None, title_text="", map_label='Reflectance (%)', COLORBAR_EXTEND_DIR='max'):
     
@@ -96,9 +109,12 @@ def plot_maps(masked_array_list, names_list, figsize=None, cmap_list=None, clim_
         
         if cmap_list is None:
             cmap = 'magma'
+            # For TCC, in position 3
+            if i == 2:
+                cmap = 'viridis'
         else:
             cmap = cmap_list[i]
-            
+
         if clim_list is None:
             clim = calcperc_nan(ma, perc=(1,95))
         else:
@@ -177,14 +193,48 @@ def map_image_band(cog_fn, band_num=1, vmin=0.20, vmax=0.45, figsize=(5, 5)):
         # add colorbar using the now hidden image
         fig.colorbar(image_hidden, ax=ax)
         
-def plot_scatter(warp_ma_masked_list, SRC_NAME, RES, FIG_SIZE, RETURN_DF=True):
+def tcc_classifier(row):
+    if row["tcc_ref"] > 0 and row["tcc_ref"] <= 0.2 * 1e4:
+        return "0-20%"
+    elif row["tcc_ref"] > 0.2 * 1e4 and row["tcc_ref"] <= 0.4 * 1e4:
+        return "21-40%"
+    elif row["tcc_ref"] > 0.4 * 1e4 and row["tcc_ref"] <= 0.6 * 1e4:
+        return "41-60%"
+    elif row["tcc_ref"] > 0.6 * 1e4 and row["tcc_ref"] <= 0.8 * 1e4:
+        return "61-80%"
+    else:
+        #row["tcc_ref"] > 0.8 * 1e4 and row["tcc_ref"] <= 1.0 * 1e4:
+        return "81-100%"
+        
+def build_pred_obs(warp_ma_masked_list, RETURN_DF=False):
     
     # Prep the x and y data
     # Reference is first element in list, which needs to be the y-var: b/c we are predicting SR from TOA
-    src_y_var, ref_x_var = [ma.ravel() for ma in warp_ma_masked_list]
-
+    if len(warp_ma_masked_list) == 3:
+        src_y_var, ref_x_var, tcc_x_var = [ma.ravel() for ma in warp_ma_masked_list]
+    if len(warp_ma_masked_list) == 2:
+        src_y_var, ref_x_var = [ma.ravel() for ma in warp_ma_masked_list]
+    
     y_var = src_y_var[src_y_var.mask == False]
     x_var = ref_x_var[ref_x_var.mask == False]
+    
+    if len(warp_ma_masked_list) == 2:
+        tcc_x_var = x_var.copy()
+        tcc_x_var[:] = np.nan 
+    
+    #if len(warp_ma_masked_list) == 3:
+    tcc = tcc_x_var[tcc_x_var.mask == False]
+    
+    if RETURN_DF:
+        df = pd.DataFrame(data = np.transpose([y_var,x_var,tcc]), columns=['ht_m_src','ht_m_ref','tcc_ref'])
+        df['tcc_class'] = df.apply(tcc_classifier, axis=1)
+        return df
+    else:
+        return y_var, x_var, tcc
+        
+def plot_scatter(warp_ma_masked_list, SRC_NAME, RES, FIG_SIZE, RETURN_DF=False):
+    
+    y_var, x_var, tcc_var = build_pred_obs(warp_ma_masked_list, RETURN_DF=RETURN_DF)
     
     figsize=(6,6)
     fig, ax = plt.subplots(ncols=1, nrows=1, figsize=FIG_SIZE, sharex=True, sharey=True)
@@ -200,7 +250,7 @@ def plot_scatter(warp_ma_masked_list, SRC_NAME, RES, FIG_SIZE, RETURN_DF=True):
     cb.set_label(f'# {RES} m pixel obs.')
     
     if RETURN_DF:
-        df_ht_val = pd.DataFrame(data = np.transpose([y_var,x_var]), columns=['ht_m_src','ht_m_ref'])
+        
         return df_ht_val
     
 def plot_diff_map(warp_ma_masked_list, SRC_NAME, clim_list = [(-10,10)]):
@@ -209,9 +259,10 @@ def plot_diff_map(warp_ma_masked_list, SRC_NAME, clim_list = [(-10,10)]):
     # Difference Map
     diff_ma = warp_ma_masked_list[0]-warp_ma_masked_list[1]
 
-    print('Diff array mins/maxs')
-    print(f'Diff ma min: {np.nanmin(diff_ma)}')
-    print(f'Diff ma max: {np.nanmax(diff_ma)}') 
+    if False:
+        print('Diff array mins/maxs')
+        print(f'Diff ma min: {np.nanmin(diff_ma)}')
+        print(f'Diff ma max: {np.nanmax(diff_ma)}') 
 
     plot_maps([diff_ma], [''], title_text=f'Difference: {SRC_NAME} - reference', clim_list = clim_list, 
               cmap_list=['RdBu'],
@@ -219,3 +270,32 @@ def plot_diff_map(warp_ma_masked_list, SRC_NAME, clim_list = [(-10,10)]):
               map_label = 'Difference [m]\n under-estimate <---> over-estimate',
               COLORBAR_EXTEND_DIR='both'
              )
+    
+def do_validation_df(IMG_IDX, list_of_pred_fn, list_of_ref_fn, out_csv_dir, DEBUG=False):
+    
+    #print(os.path.basename(list_of_pred_fn[IMG_IDX]))
+    
+    pred_file = os.path.basename(list_of_pred_fn[IMG_IDX])
+    ref_file = os.path.basename(list_of_ref_fn[IMG_IDX])
+    out_csv_fn = os.path.join(out_csv_dir, pred_file.replace('.tif','') + '_' + ref_file.replace('.tif','') + f'_val{IMG_IDX:04}.csv')
+    
+    if not os.path.isfile(out_csv_fn): 
+        
+        print(f'Run {IMG_IDX}')
+        
+        df = validate_chm_pred(list_of_pred_fn[IMG_IDX], list_of_ref_fn[IMG_IDX], scale_factor=0.1, RETURN_DF=True, DEBUG=DEBUG)
+        df['file'] = pred_file
+        
+        if DEBUG: print(f'Head before attributes: {df.head()}')
+    
+        # Write fields
+        df = footprintlib.get_attributes_from_filename(df, 'CHM pred', '-sr', DROP_FILE_DUPLICATES=False)
+        
+        if DEBUG: print(f'Head after attributes: {df.head()}')
+    
+        # Write df (b/c returning all to a list in memory isnt working...)
+        df.to_csv(out_csv_fn)
+    else:
+        print(f'Skip {IMG_IDX}')
+    
+    #return df  
