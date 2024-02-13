@@ -47,4 +47,5 @@ line-length = 88
 target-version = ['py38']
 
 [project.scripts]
-above-shrubs-cnn-pipeline = "above_shrubs.view.chm_pipeline_cnn:main"
+above-shrubs-chm-pipeline = "above_shrubs.view.chm_pipeline_cnn:main"
+above-shrubs-lc-pipeline = "above_shrubs.view.landcover_pipeline_cnn:main"
