@@ -1,0 +1,117 @@
+# --------------------------------------------------------------------------
+# Configuration of the parameters for training and preprocessing
+# very-high resolution dataset using deep learning techniques.
+# --------------------------------------------------------------------------
+
+experiment_name: landcover-above
+experiment_type: landcover
+
+data_dir: '/explore/nobackup/projects/ilab/projects/ABoVE-Shrubs/development/landcover_test'
+model_dir: '${data_dir}/model'
+
+seed: 42
+gpu_devices: 0,1,2,3
+mixed_precision: True
+xla: False
+
+input_bands:
+  - Blue
+  - Green
+  - Red
+  - NIR1
+  - CoastalBlue
+  - Yellow
+  - RedEdge
+  - NIR2
+
+output_bands:
+  - Blue
+  - Green
+  - Red
+  - NIR1
+  
+substract_labels: True
+normalize: 10000.0
+rescale: None
+
+#modify_labels:
+#  - "x == 0": 8
+#  - "x == 1": 9
+#  - "x == 4": 7
+#  - "x == 3": 0
+#  - "x == 2": 0
+#  - "x == 8": 1
+#  - "x == 9": 2
+#  - "x == 7": 3
+
+expand_dims: True
+tile_size: 256
+include_classes: True
+augment: True
+
+# standardization functions: local, global, mixed
+# global standardization
+# mixed standardization
+standardization: None
+batch_size: 256
+n_classes: 10
+test_size: 0.20
+learning_rate: 0.0001
+max_epochs: 6000
+patience: 10
+
+model: "tfc.networks.unet.unet_batchnorm(nclass=10, input_size=(256, 256, 4),maps=[64, 128, 256, 512, 1024])"
+#model: "sm.Unet('resnet34', input_shape=(256, 256, 3), encoder_weights=None, classes=4, activation='softmax')"
+
+loss: 'tf.keras.losses.CategoricalCrossentropy()'
+#loss: sm.losses.CategoricalFocalLoss
+#loss: sm.losses.categorical_focal_dice_loss
+#loss: sm.losses.categorical_focal_jaccard_loss
+
+optimizer: tf.keras.optimizers.legacy.Adam
+
+metrics:
+  - 'tf.keras.metrics.CategoricalAccuracy()'
+  - 'tf.keras.metrics.Recall()'
+  - 'tf.keras.metrics.Precision()'
+  - 'sm.metrics.iou_score'
+
+callbacks:
+  - "tf.keras.callbacks.ModelCheckpoint(save_best_only=True, mode='max', monitor='val_categorical_accuracy', filepath='${data_dir}/model/{epoch:02d}-{val_loss:.2f}.hdf5')"
+  - "tf.keras.callbacks.ReduceLROnPlateau(monitor='val_loss', factor=0.1, patience=4)"
+  - "tf.keras.callbacks.EarlyStopping(monitor='val_loss', patience=10, restore_best_weights=False)"
+  - "tf.keras.callbacks.TerminateOnNaN()"
+  - "tf.keras.callbacks.CSVLogger('${model_dir}/${experiment_name}.csv')"
+  - "tf.keras.callbacks.BackupAndRestore('${model_dir}/backup')"
+
+# window_size: 8192
+window_size: 10000
+pred_batch_size: 128
+inference_overlap: 0.50
+inference_treshold: 0.50
+
+# Prediction location
+# model_filename: /projects/kwessel4/nga-senegal-4class/dataset/model/71-0.20.hdf5 ## CAS+ETZ
+inference_regex_list:
+  - '/explore/nobackup/projects/ilab/data/above_shrubs/jj_squares/vhr_data/*jj-square.tif'
+  - '/explore/nobackup/projects/above/misc/ABoVE_Shrubs/srlite/002m/WV02_20110818_M1BS_103001000C94F200-sr-02m*.tif'
+  - '/explore/nobackup/projects/above/misc/ABoVE_Shrubs/srlite/002m/WV02_20120706_M1BS_1030010019B16500-sr-02m*.tif'
+  - '/explore/nobackup/projects/above/misc/ABoVE_Shrubs/srlite/002m/WV02_20120721_M1BS_103001001AB23900-sr-02m*.tif'
+  - '/explore/nobackup/projects/above/misc/ABoVE_Shrubs/srlite/002m/WV02_20130710_M1BS_103001002536B400-sr-02m*.tif'
+  - '/explore/nobackup/projects/above/misc/ABoVE_Shrubs/srlite/002m/WV02_20130818_M1BS_10300100269C9900-sr-02m*.tif'
+  - '/explore/nobackup/projects/above/misc/ABoVE_Shrubs/srlite/002m/WV02_20130820_M1BS_1030010025522400-sr-02m*.tif'
+  - '/explore/nobackup/projects/above/misc/ABoVE_Shrubs/srlite/002m/WV02_20150811_M1BS_10300100465A5200-sr-02m*.tif'
+  - '/explore/nobackup/projects/above/misc/ABoVE_Shrubs/srlite/002m/WV02_20160831_M1BS_103001005DB58300-sr-02m*.tif'
+  - '/explore/nobackup/projects/above/misc/ABoVE_Shrubs/srlite/002m/WV02_20170723_M1BS_103001006BD7B700-sr-02m*.tif'
+  - '/explore/nobackup/projects/above/misc/ABoVE_Shrubs/srlite/002m/WV02_20170805_M1BS_103001006D0FDD00-sr-02m*.tif'
+  - '/explore/nobackup/projects/above/misc/ABoVE_Shrubs/srlite/002m/WV02_20180706_M1BS_1030010081668400-sr-02m*.tif'
+  - '/explore/nobackup/projects/above/misc/ABoVE_Shrubs/srlite/002m/WV02_20190705_M1BS_1030010094740A00-sr-02m*.tif'
+  - '/explore/nobackup/projects/above/misc/ABoVE_Shrubs/srlite/002m/WV02_20190706_M1BS_1030010095ADF500-sr-02m*.tif'
+  - '/explore/nobackup/projects/above/misc/ABoVE_Shrubs/srlite/002m/WV02_20200710_M1BS_10300100AAA71100-sr-02m*.tif'
+  - '/explore/nobackup/projects/above/misc/ABoVE_Shrubs/srlite/002m/WV02_20200711_M1BS_10300100A856F100-sr-02m*.tif'
+  - '/explore/nobackup/projects/above/misc/ABoVE_Shrubs/srlite/002m/WV03_20180719_M1BS_1040010040168B00-sr-02m*.tif'
+  - '/explore/nobackup/projects/above/misc/ABoVE_Shrubs/srlite/002m/WV03_20190707_M1BS_104001004F0ED700-sr-02m*.tif'
+  - '/explore/nobackup/projects/above/misc/ABoVE_Shrubs/srlite/002m/*.tif'
+inference_save_dir: '${data_dir}/predictions'
+
+# possible output location /explore/nobackup/projects/above/misc/ABoVE_Shrubs/development/landcover/v1
