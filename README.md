@@ -1,5 +1,5 @@
-# above-shrubs
-`ABoVE-Shrubs` a project to examine change in Arctic shrub structure in western Alaska. It is funded by the NASA Terrestrial Ecology Program as part of the [NASA Arctic/Boreal Vulnerability Experiment](https://above.nasa.gov/). The portion of the project supported by this repository involves the development of segmentation and regression deep learning models applied to very-high-resolution (VHR) spaceborne imagery. These models are run in `singularity`, an open source container platform that ensures the portability and reproducability of our workflow to map Arctic/Boreal land cover and canopy height from VHR imagery.
+# ABoVE-Shrubs
+`ABoVE-Shrubs` refers to a project to examine change in Arctic shrub structure in western Alaska. It is funded by the NASA Terrestrial Ecology Program as part of the [NASA Arctic/Boreal Vulnerability Experiment](https://above.nasa.gov/). The portion of the project supported by this repository involves the development of segmentation and regression deep learning models applied to very-high-resolution (VHR) spaceborne imagery. These models are run in `singularity`, an open source container platform that ensures the portability and reproducability of our workflow to map Arctic/Boreal land cover and canopy height from VHR imagery.
 
 [![DOI](https://zenodo.org/badge/627911660.svg)](https://zenodo.org/badge/latestdoi/627911660)
 ![CI Workflow](https://github.com/nasa-nccs-hpda/above-shrubs/actions/workflows/ci.yml/badge.svg)
