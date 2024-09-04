@@ -23,6 +23,39 @@ def main():
                         dest='config_file',
                         help='Path to the configuration file')
 
+    parser.add_argument('-f',
+                        '--force-cleanup',
+                        required=False,
+                        default=False,
+                        action='store_true',
+                        dest='force_cleanup',
+                        help='Cleanup of lock files in prediction')
+
+    parser.add_argument('-m',
+                        '--model-filename',
+                        type=str,
+                        required=False,
+                        default=None,
+                        dest='model_filename',
+                        help='Path to model file')
+
+    parser.add_argument('-o',
+                        '--output-dir',
+                        type=str,
+                        default=None,
+                        required=False,
+                        dest='output_dir',
+                        help='Path to output directory')
+
+    parser.add_argument('-r',
+                        '--regex-list',
+                        type=str,
+                        nargs='*',
+                        required=False,
+                        dest='inference_regex_list',
+                        help='Inference regex list',
+                        default=None)
+
     parser.add_argument(
                         '-s',
                         '--step',
@@ -44,7 +77,12 @@ def main():
     timer = time.time()
 
     # Initialize pipeline object
-    pipeline = CHMPipeline(args.config_file)
+    pipeline = CHMPipeline(
+        args.config_file,
+        args.model_filename,
+        args.output_dir,
+        args.inference_regex_list
+    )
 
     # Regression CHM pipeline steps
     if "setup" in args.pipeline_step or "all" in args.pipeline_step:
@@ -54,7 +92,7 @@ def main():
     if "train" in args.pipeline_step or "all" in args.pipeline_step:
         pipeline.train()
     if "predict" in args.pipeline_step or "all" in args.pipeline_step:
-        pipeline.predict()
+        pipeline.predict(args.force_cleanup)
     if "validate" in args.pipeline_step or "all" in args.pipeline_step:
         pipeline.validate()
 

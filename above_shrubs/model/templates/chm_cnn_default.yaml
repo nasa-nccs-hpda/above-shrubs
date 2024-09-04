@@ -97,6 +97,5 @@ cloudmask_path: '/explore/nobackup/projects/above/misc/ABoVE_Shrubs/cloudmask/*/
 # Prediction location
 model_filename: /explore/nobackup/people/mmacande/srlite/chm_model/20231014_chm/models_merged_nodtm/053-1.02.hdf5
 inference_regex_list:
-   #- /explore/nobackup/people/mmacande/srlite/chm_model/20231014_chm/nontrain_strips_0708_arcBorC_v20231017.csv
-   - '/explore/nobackup/projects/ilab/data/above_shrubs/jj_squares/vhr_data/*.tif'
-inference_save_dir: /explore/nobackup/projects/ilab/scratch/jacaraba/above-shrubs/products_merged_nodtm_nontrain_strips
+   - /explore/nobackup/people/mmacande/srlite/chm_model/20231014_chm/nontrain_strips_0708_arcBorC_v20231017.csv
+inference_save_dir: /explore/nobackup/people/mmacande/srlite/chm_model/20231014_chm/products_merged_nodtm_nontrain_strips

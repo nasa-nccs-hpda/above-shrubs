@@ -1,0 +1,10 @@
+FROM nasanccs/pytorch-caney:latest
+LABEL maintainer="jordan.a.caraballo-vega@nasa.gov"
+
+ENV ABOVE_SHRUBS_VERSION=main
+
+RUN pip install git+https://github.com/dshean/pygeotools.git@master \
+                terratorch
+
+HEALTHCHECK NONE
+ENTRYPOINT [""]
