@@ -6,12 +6,14 @@ import rasterio
 import numpy as np
 import pandas as pd
 import xarray as xr
-from tqdm import tqdm
-from glob import glob
 import tensorflow as tf
 import rioxarray as rxr
+
+from tqdm import tqdm
+from glob import glob
 from pathlib import Path
 from itertools import repeat
+from omegaconf import OmegaConf
 from tensorflow.data import Dataset
 from pygeotools.lib import iolib, warplib
 from multiprocessing import Pool, cpu_count
@@ -31,7 +33,6 @@ from tensorflow_caney.utils.model import load_model, get_model
 from tensorflow_caney.utils.optimizers import get_optimizer
 from tensorflow_caney.utils.metrics import get_metrics
 from tensorflow_caney.utils.callbacks import get_callbacks
-
 from tensorflow_caney.model.pipelines.cnn_regression import CNNRegression
 from tensorflow_caney.inference import regression_inference
 
@@ -52,13 +53,46 @@ class CHMPipeline(CNNRegression):
     # -------------------------------------------------------------------------
     # __init__
     # -------------------------------------------------------------------------
-    def __init__(self, config_filename, logger=None):
+    def __init__(
+                self,
+                config_filename: str,
+                model_filename: str = None,
+                output_dir: str = None,
+                inference_regex_list: list = None,
+                default_config: str = 'templates/chm_cnn_default.yaml',
+                logger=None
+            ):
+        """Constructor method
+        """
 
         # Set logger
         self.logger = logger if logger is not None else self._set_logger()
 
+        logging.info('Initializing CHMPipeline')
+
         # Configuration file intialization
+        if config_filename is None:
+            config_filename = os.path.join(
+                os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                default_config)
+            logging.info(f'Loading default config: {config_filename}')
+
         self.conf = self._read_config(config_filename, Config)
+
+        # rewrite model filename option if given from CLI
+        if model_filename is not None:
+            assert os.path.exists(model_filename), \
+                f'{model_filename} does not exist.'
+            self.conf.model_filename = model_filename
+
+        # rewrite output directory if given from CLI
+        if output_dir is not None:
+            self.conf.inference_save_dir = output_dir
+            os.makedirs(self.conf.inference_save_dir, exist_ok=True)
+
+        # rewrite inference regex list
+        if inference_regex_list is not None:
+            self.conf.inference_regex_list = inference_regex_list
 
         # output directory to store metadata and artifacts
         self.metadata_dir = os.path.join(self.conf.data_dir, 'metadata')
@@ -80,13 +114,22 @@ class CHMPipeline(CNNRegression):
                 self.metadata_dir, self.model_dir]:
             os.makedirs(out_dir, exist_ok=True)
 
+        logging.info(f'Output dir: {self.conf.inference_save_dir}')
+
+        # save configuration into the model directory
+        try:
+            OmegaConf.save(
+                self.conf, os.path.join(self.model_dir, 'config.yaml'))
+        except PermissionError:
+            logging.info('No permissions to save config, skipping step.')
+
         # Seed everything
         seed_everything(self.conf.seed)
 
     # -------------------------------------------------------------------------
     # add_dtm
     # -------------------------------------------------------------------------
-    def add_dtm(self, raster_filename, raster, dtm_filename):
+    def add_dtm(self, raster_filename: str, raster, dtm_filename: str):
 
         # warp dtm to match raster
         warp_ds_list = warplib.memwarp_multi_fn(
@@ -119,20 +162,32 @@ class CHMPipeline(CNNRegression):
 
         # additional clean-up for the imagery
         dtm.where(
-            dtm.any(dim = 'band') != True, int(raster.rio.nodata))
+            dtm.any(dim='band') != True,  # noqa: E712
+            int(raster.rio.nodata)
+        )
         dtm = dtm.where(dtm > 0, int(raster.rio.nodata))
         dtm.attrs['long_name'] = dtm.attrs['long_name'] + ("DTM",)
         return dtm
 
-    def add_cloudmask(self, raster, cloudmask_filename):
+    def add_cloudmask(
+                self,
+                raster,
+                cloudmask_filename: str,
+                nodata_value: int = -9999
+            ):
+        # TODO: try: except, I need to know the error
         cloud_raster = rxr.open_rasterio(cloudmask_filename)
-        raster = raster.where(cloud_raster[0, :, :] == 0, -9999)
+        raster = raster.where(cloud_raster[0, :, :] == 0, nodata_value)
         return raster
 
     # -------------------------------------------------------------------------
     # Getters
     # -------------------------------------------------------------------------
-    def get_filenames(self, data_regex: str) -> list:
+    def get_filenames(
+                self,
+                data_regex: str,
+                allow_empty: bool = False
+            ) -> list:
         """
         Get filename from list of regexes
         """
@@ -146,7 +201,11 @@ class CHMPipeline(CNNRegression):
                     filenames.extend(glob(regex))
         else:
             filenames = glob(data_regex)
-        assert len(filenames) > 0, f'No files under {data_regex}'
+
+        # in some cases, we need to assert if we found files
+        # in other cases, we just ignore the fact that we did not find any
+        if not allow_empty:
+            assert len(filenames) > 0, f'No files under {data_regex}'
         return sorted(filenames)
 
     # -------------------------------------------------------------------------
@@ -376,7 +435,7 @@ class CHMPipeline(CNNRegression):
     # -------------------------------------------------------------------------
     # predict
     # -------------------------------------------------------------------------
-    def predict(self) -> None:
+    def predict(self, force_cleanup: bool = False) -> None:
 
         logging.info('Starting prediction stage')
 
@@ -433,6 +492,19 @@ class CHMPipeline(CNNRegression):
             # lock file for multi-node, multi-processing
             lock_filename = f'{output_filename}.lock'
 
+            # delete lock file and overwrite prediction if force_cleanup
+            logging.warning(
+                'You have selected to force cleanup files. ' +
+                'This option disables lock file tracking, which' +
+                'Could lead to processing the same file multiple times.'
+            )
+            if force_cleanup and os.path.isfile(lock_filename):
+                try:
+                    os.remove(lock_filename)
+                except FileNotFoundError:
+                    logging.info(f'Lock file not found {lock_filename}')
+                    continue
+
             # predict only if file does not exist and no lock file
             if not os.path.isfile(output_filename) and \
                     not os.path.isfile(lock_filename):
@@ -488,6 +560,8 @@ class CHMPipeline(CNNRegression):
                 image = image.transpose("y", "x", "band")
 
                 # Remove no-data values to account for edge effects
+                # TODO: consider replacing this with the new parameters
+                # for better padding.
                 temporary_tif = xr.where(image > -100, image, 2000)
 
                 # Sliding window prediction
@@ -527,11 +601,15 @@ class CHMPipeline(CNNRegression):
 
                 # Add cloudmask to the prediction
                 if self.conf.cloudmask_path is not None:
+
+                    # get the corresponding file that matches the
+                    # cloudmask regex
                     cloudmask_filename = self.get_filenames(
                         os.path.join(
                             self.conf.cloudmask_path,
                             f'{Path(filename).stem.split("-")[0]}*.tif'
-                        )
+                        ),
+                        allow_empty=True
                     )
 
                     # if we found cloud mask filename, proceed

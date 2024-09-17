@@ -1,6 +1,5 @@
-# above-shrubs
-
-Development of segmentation and regression deep learning models for ABoVE Shrubs project.
+# ABoVE-Shrubs
+`ABoVE-Shrubs` refers to a project to examine change in Arctic shrub structure in western Alaska. It is funded by the NASA Terrestrial Ecology Program as part of the [NASA Arctic/Boreal Vulnerability Experiment](https://above.nasa.gov/). The portion of the project supported by this repository involves the development of segmentation and regression deep learning models applied to very-high-resolution (VHR) spaceborne imagery. These models are run in `singularity`, an open source container platform that ensures the portability and reproducability of our workflow to map Arctic/Boreal land cover and canopy height from VHR imagery.
 
 [![DOI](https://zenodo.org/badge/627911660.svg)](https://zenodo.org/badge/latestdoi/627911660)
 ![CI Workflow](https://github.com/nasa-nccs-hpda/above-shrubs/actions/workflows/ci.yml/badge.svg)
@@ -35,14 +34,15 @@ git clone https://github.com/nasa-nccs-hpda/above-shrubs
 
 ## Downloading Singularity Container
 
-This project has two containers. The Development container has all of the Python dependencies, with the exception
+This project has two containers: 
+  - The `Development` container has all of the Python dependencies, with the exception
 of the PIP installable modules of this repository. You will need to export the path to this repository in order
 to pull the latest changes.
 
-The second container is the production container which containers the latest stable release with a PIP installable
+  - The `Production` container has the latest stable release with a PIP installable
 module of this package. No need to export any paths to the PYTHONPATH environment variable.
 
-If you are working on the NCCS Explore system, we have built a default container under:
+If you are working on the NASA Goddard NCCS Explore system, we have built a default container under:
 /explore/nobackup/projects/ilab/containers/above-shrubs.tif.
 
 ### Development container
