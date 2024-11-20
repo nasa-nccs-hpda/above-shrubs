@@ -41,3 +41,11 @@ class LandCoverConfig(Config):
 
     # filenames storing cloud mask
     cloudmask_path: Optional[str] = None
+    cloudmask_value: Optional[int] = None
+
+    # regex to find CHMs (cannot use path because
+    # of inference directory structure)
+    chm_regex: Optional[str] = None
+
+    # set probability to False by default
+    probability_map: Optional[bool] = False
