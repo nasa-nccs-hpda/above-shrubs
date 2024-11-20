@@ -65,9 +65,6 @@ class CHMPipeline(CNNRegression):
         """Constructor method
         """
 
-        # Set logger
-        self.logger = logger if logger is not None else self._set_logger()
-
         logging.info('Initializing CHMPipeline')
 
         # Configuration file intialization
@@ -78,6 +75,9 @@ class CHMPipeline(CNNRegression):
             logging.info(f'Loading default config: {config_filename}')
 
         self.conf = self._read_config(config_filename, Config)
+
+        # Set logger
+        self.logger = logger if logger is not None else self._set_logger()
 
         # rewrite model filename option if given from CLI
         if model_filename is not None:
@@ -196,7 +196,10 @@ class CHMPipeline(CNNRegression):
         if isinstance(data_regex, list) or isinstance(data_regex, ListConfig):
             for regex in data_regex:
                 if regex[-3:] == 'csv':
-                    filenames.extend(pd.read_csv(regex).iloc[:, 0].tolist())
+                    filenames.extend(
+                        pd.read_csv(regex).select_dtypes(
+                            include='object').iloc[:, 0].tolist()
+                    )
                 else:
                     filenames.extend(glob(regex))
         else:
@@ -493,12 +496,14 @@ class CHMPipeline(CNNRegression):
             lock_filename = f'{output_filename}.lock'
 
             # delete lock file and overwrite prediction if force_cleanup
-            logging.warning(
-                'You have selected to force cleanup files. ' +
-                'This option disables lock file tracking, which' +
-                'Could lead to processing the same file multiple times.'
-            )
             if force_cleanup and os.path.isfile(lock_filename):
+
+                logging.warning(
+                    'You have selected to force cleanup files. ' +
+                    'This option disables lock file tracking, which' +
+                    'Could lead to processing the same file multiple times.'
+                )
+
                 try:
                     os.remove(lock_filename)
                 except FileNotFoundError:
