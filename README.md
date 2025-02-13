@@ -89,12 +89,18 @@ Training of the deep learning model.
 singularity exec --env PYTHONPATH="$NOBACKUP/development/above-shrubs" --nv -B $NOBACKUP,/lscratch,/explore/nobackup/people,/explore/nobackup/projects /lscratch/$USER/container/above-shrubs python $NOBACKUP/development/above-shrubs/above_shrubs/view/chm_pipeline_cnn.py -c /explore/nobackup/people/jacaraba/development/above-shrubs/projects/chm_cnn/configs/above_shrubs_cnn_v1.yaml -s train
 ```
 
+To turn this into a full slurm submission command:
+
+```bash
+sbatch --mem-per-cpu=10240 -G4 -c40 -t05-00:00:00 -J cunet-v1.1.1 --wrap="singularity exec --env PYTHONPATH=/explore/nobackup/people/jacaraba/development/above-shrubs:/explore/nobackup/people/jacaraba/development/tensorflow-caney --nv -B $NOBACKUP,/explore/nobackup/people,/explore/nobackup/projects /explore/nobackup/projects/ilab/containers/above-shrubs-pytorch.2024-09 python /explore/nobackup/people/jacaraba/development/above-shrubs/above_shrubs/view/chm_pipeline_cnn.py -c /explore/nobackup/projects/above/misc/ABoVE_Shrubs/development/configs/above_shrubs_chm_custom_unet.yaml -s train"
+```
+
 ### 2.4. Inference
 
 Inference as part of a single system:
 
 ```bash
-singularity exec --env PYTHONPATH="$NOBACKUP/development/above-shrubs" --nv -B $NOBACKUP,/lscratch,/explore/nobackup/people,/explore/nobackup/projects /lscratch/$USER/container/above-shrubs python $NOBACKUP/development/above-shrubs/above_shrubs/view/chm_pipeline_cnn.py -c /explore/nobackup/people/jacaraba/development/above-shrubs/projects/chm_cnn/configs/above_shrubs_cnn_v1.yaml -s predict
+singularity exec --env PYTHONPATH="$NOBACKUP/development/above-shrubs" --nv -B $NOBACKUP,/lscratch,/explore/nobackup/people,/explore/nobackup/projects /explore/nobackup/projects/ilab/containers/above-shrubs.2023.07 python $NOBACKUP/development/above-shrubs/above_shrubs/view/chm_pipeline_cnn.py -c /explore/nobackup/people/jacaraba/development/above-shrubs/projects/chm_cnn/configs/above_shrubs_cnn_v1.yaml -s predict
 ```
 
 Parallel inference across the cluster using Slurm:
@@ -125,6 +131,12 @@ Generate training and validation tiles.
 
 ```bash
 singularity exec --env PYTHONPATH="$NOBACKUP/development/above-shrubs" --nv -B $NOBACKUP,/lscratch,/explore/nobackup/people,/explore/nobackup/projects /lscratch/$USER/container/above-shrubs python $NOBACKUP/development/above-shrubs/above_shrubs/view/landcover_pipeline_cnn.py -c $NOBACKUP/development/above-shrubs/projects/landcover_cnn/above_shrubs_cnn_v1.yaml -d $NOBACKUP/development/above-shrubs/projects/landcover_cnn/above_shrubs_cnn_v1.csv -s preprocess
+```
+
+Adding CHM to the input bands:
+
+```bash
+singularity exec --env PYTHONPATH="$NOBACKUP/development/above-shrubs:$NOBACKUP/development/tensorflow-caney" --nv -B $NOBACKUP,/lscratch,/explore/nobackup/people,/explore/nobackup/projects /lscratch/$USER/container/above-shrubs python $NOBACKUP/development/above-shrubs/above_shrubs/view/landcover_pipeline_cnn.py -c $NOBACKUP/development/above-shrubs/projects/landcover_cnn/above_shrubs_cnn_v1.1_chm.yaml -d $NOBACKUP/development/above-shrubs/projects/landcover_cnn/above_shrubs_cnn_v1.1_chm.csv -s preprocess
 ```
 
 ### 3.2. Train
