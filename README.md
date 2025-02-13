@@ -92,7 +92,7 @@ singularity exec --env PYTHONPATH="$NOBACKUP/development/above-shrubs" --nv -B $
 To turn this into a full slurm submission command:
 
 ```bash
-sbatch --mem-per-cpu=10240 -G4 -c40 -t05-00:00:00 -J cunet-v1.1.1 --wrap="singularity exec --env PYTHONPATH=/explore/nobackup/people/jacaraba/development/above-shrubs:/explore/nobackup/people/jacaraba/development/tensorflow-caney --nv -B $NOBACKUP,/explore/nobackup/people,/explore/nobackup/projects /explore/nobackup/projects/ilab/containers/above-shrubs-pytorch.2024-09 python /explore/nobackup/people/jacaraba/development/above-shrubs/above_shrubs/view/chm_pipeline_cnn.py -c /explore/nobackup/projects/above/misc/ABoVE_Shrubs/development/configs/above_shrubs_chm_custom_unet.yaml -s train"
+sbatch --mem-per-cpu=10240 -G4 -c40 -t05-00:00:00 -J cunet-v1.1.1 --wrap="singularity exec --env PYTHONPATH=/explore/nobackup/people/jacaraba/development/above-shrubs:/explore/nobackup/people/jacaraba/development/tensorflow-caney --nv -B $NOBACKUP,/explore/nobackup/people,/explore/nobackup/projects /explore/nobackup/projects/ilab/containers/above-shrubs.2023.07 python /explore/nobackup/people/jacaraba/development/above-shrubs/above_shrubs/view/chm_pipeline_cnn.py -c /explore/nobackup/projects/above/misc/ABoVE_Shrubs/development/configs/above_shrubs_chm_custom_unet.yaml -s train"
 ```
 
 ### 2.4. Inference
