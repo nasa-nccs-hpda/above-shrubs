@@ -1,0 +1,116 @@
+experiment_name: cnn-chm-above
+experiment_type: cnn-chm-v1
+
+#------------------------------------- Setup -------------------------------------#
+
+# directory that store train data
+train_data_dir:  /explore/nobackup/people/mmacande/srlite/chm_model/20231014_chm/train_merged_nodtm_images
+train_label_dir: /explore/nobackup/people/mmacande/srlite/chm_model/20231014_chm/train_merged_chm
+data_dir:       '/explore/nobackup/people/mmacande/srlite/chm_model/20231014_chm/train_merged_nodtm_npy'
+
+# directory that stores test data
+test_data_dir:  /explore/nobackup/people/mmacande/srlite/chm_model/20231014_chm/test_merged_nodtm_images
+test_label_dir: /explore/nobackup/people/mmacande/srlite/chm_model/20231014_chm/test_merged_chm
+test_dir:      '/explore/nobackup/people/mmacande/srlite/chm_model/20231014_chm/test_merged_nodtm_npy'
+
+dtm_path: /explore/nobackup/projects/dem/AK_IFSAR/alaska_ifsar_dtm_20221222.tif
+dsm_path: /explore/nobackup/projects/dem/AK_IFSAR/alaska_ifsar_dsm_20221222.tif
+
+#------------------------------------- General -------------------------------------#
+
+# model_dir: '/explore/nobackup/people/${oc.env:USER}/projects/SRLite/regression-models'
+model_dir: '/explore/nobackup/people/mmacande/srlite/chm_model/20231014_chm/models_merged_nodtm'
+
+seed: 43
+gpu_devices: 0,1,2,3
+mixed_precision: False
+xla: False
+
+input_bands:
+  - B
+  - G
+  - R
+  - NIR
+
+output_bands:
+  - B
+  - G
+  - R
+  - NIR
+
+#substract_labels: True
+normalize: 1.0
+normalize_label: 1.0
+
+expand_dims: True
+tile_size: 64
+include_classes: False
+
+# 90/180 degree rotations not appropriate in Arctic,
+# could use smaller/jittered augmentation instead
+augment: False
+
+# standardization functions: local, global, mixed
+# global standardization
+# mixed standardization
+standardization: 'global'
+batch_size: 32
+n_classes: 1
+test_size: 0.10
+learning_rate: 0.00001
+max_epochs: 6000
+patience: 10
+
+#model: 'tfc.model.networks.regression.regression_unet.unet_batchnorm_regression(nclass=1, input_size=(256, 256, 5), maps=[64, 128, 256, 512, 1024],final_activation="linear")'
+model: 'tfc.model.networks.regression.regression_unet.unet_batchnorm_regression(nclass=1, input_size=(64, 64, 4), maps=[64, 128, 256, 512, 1024],final_activation="linear")'
+
+loss: 'tf.keras.losses.MeanAbsoluteError()'
+#loss: 'tf.keras.losses.MeanSquaredError()'
+
+optimizer: tf.keras.optimizers.Adam
+#optimizer: tf.keras.optimizers.RMSprop
+
+metrics:
+  - 'tf.keras.metrics.MeanSquaredError()'
+  - 'tf.keras.metrics.RootMeanSquaredError()'
+  - 'tf.keras.metrics.MeanAbsoluteError()'
+  - 'tfa.metrics.RSquare()'
+
+callbacks:
+  - "tf.keras.callbacks.ModelCheckpoint(save_best_only=True, mode='min', monitor='val_loss', filepath='${model_dir}/{epoch:03d}-{val_loss:.2f}.hdf5')"
+  - "tf.keras.callbacks.ReduceLROnPlateau(monitor='val_loss', factor=0.1, patience=5)"
+  - "tf.keras.callbacks.EarlyStopping(monitor='val_loss', patience=10, restore_best_weights=False)"
+  - "tf.keras.callbacks.TerminateOnNaN()"
+  - "tf.keras.callbacks.CSVLogger('${model_dir}/${experiment_name}.csv')"
+  - "tf.keras.callbacks.BackupAndRestore('${model_dir}/backup')"
+#------------------------------------- Inference -------------------------------------#
+
+window_size: 10000
+pred_batch_size: 64
+inference_overlap: 0.50
+inference_treshold: 0.50
+prediction_dtype: float32
+prediction_nodata: -9999
+
+#cloudmask_path: '/explore/nobackup/projects/above/misc/ABoVE_Shrubs/cloudmask/002m'
+
+# Prediction location
+model_filename: /explore/nobackup/people/mmacande/srlite/chm_model/20231014_chm/models_merged_nodtm/053-1.02.hdf5
+inference_regex_list:
+  # - /explore/nobackup/people/mmacande/srlite/chm_model/20231014_chm/inference_list_jj_squares_v20240228.csv
+  - /explore/nobackup/projects/above/misc/ABoVE_Shrubs/srlite_ak_2024/QB02_20020702_M1BS_1010010000B62600_sr_02m.tif
+  - /explore/nobackup/projects/above/misc/ABoVE_Shrubs/srlite_ak_2024/QB02_20050817_M1BS_101001000474C600_sr_02m.tif 
+  - /explore/nobackup/projects/above/misc/ABoVE_Shrubs/srlite_ak_2024/QB02_20040701_M1BS_101001000311AF00_sr_02m.tif
+  - '/explore/nobackup/projects/above/misc/ABoVE_Shrubs/srlite/002m/WV03_20200704_M1BS_104001005EADB900-sr-02m.tif'
+  - '/explore/nobackup/projects/above/misc/ABoVE_Shrubs/srlite/002m/WV03_20200704_M1BS_104001005EADB900-sr-02m.tif'
+  - '/explore/nobackup/projects/above/misc/ABoVE_Shrubs/srlite/002m/WV02_20200722_M1BS_10300100AB1FD100-sr-02m.tif'
+  - '/explore/nobackup/projects/above/misc/ABoVE_Shrubs/srlite/002m/WV03_20190822_M1BS_104001005054F700-sr-02m.tif'
+  - '/explore/nobackup/projects/above/misc/ABoVE_Shrubs/srlite/002m/WV03_20170719_M1BS_104001002F7A2E00-sr-02m.tif'
+  - '/explore/nobackup/projects/above/misc/ABoVE_Shrubs/srlite/002m/WV02_20160817_M1BS_103001005B484100-sr-02m.tif'
+  - '/explore/nobackup/projects/above/misc/ABoVE_Shrubs/srlite/002m/WV02_20190820_M1BS_1030010099BF2F00-sr-02m.tif'
+  - '/explore/nobackup/projects/above/misc/ABoVE_Shrubs/srlite/002m/WV02_20110727_M1BS_103001000D914900-sr-02m.tif'
+  - '/explore/nobackup/projects/above/misc/ABoVE_Shrubs/srlite/002m/WV02_20190820_M1BS_10300100968FB300-sr-02m.tif'
+  - '/explore/nobackup/projects/above/misc/ABoVE_Shrubs/srlite/002m/WV02_20190820_M1BS_10300100954DE000-sr-02m.tif'
+  - '/explore/nobackup/projects/above/misc/ABoVE_Shrubs/srlite/002m/WV02_20120721_M1BS_103001001AB23900-sr-02m.tif'
+  - '/explore/nobackup/projects/above/misc/ABoVE_Shrubs/srlite/002m/*-sr-02m.tif'
+inference_save_dir: /explore/nobackup/projects/above/misc/ABoVE_Shrubs/development/chm/v1/custom_unet/1.1.0

@@ -1,0 +1,135 @@
+experiment_name: cnn-chm-above
+experiment_type: cnn-chm-v2.2
+
+#------------------------------------- Setup -------------------------------------#
+
+# directory that store train data
+train_data_dir: /explore/nobackup/people/mmacande/srlite/chm_model/20230515b_chm/train_images
+train_label_dir: /explore/nobackup/people/mmacande/srlite/chm_model/20230515b_chm/train_labels
+data_dir: '/explore/nobackup/people/${oc.env:USER}/projects/SRLite/regression-models/train_data'
+
+# directory that stores test data
+test_data_dir: /explore/nobackup/people/mmacande/srlite/chm_model/20230515b_chm/test_images
+test_label_dir: /explore/nobackup/people/mmacande/srlite/chm_model/20230515b_chm/test_labels
+test_dir: '/explore/nobackup/people/${oc.env:USER}/projects/SRLite/regression-models/test_data'
+
+dtm_path: /explore/nobackup/projects/dem/AK_IFSAR/alaska_ifsar_dtm_20221222.tif
+dsm_path: /explore/nobackup/projects/dem/AK_IFSAR/alaska_ifsar_dsm_20221222.tif
+
+#------------------------------------- General -------------------------------------#
+
+# model_dir: '/explore/nobackup/people/${oc.env:USER}/projects/SRLite/regression-models'
+model_dir: '/explore/nobackup/people/jacaraba/projects/SRLite/regression-models'
+
+seed: 42
+gpu_devices: 0,1,2,3
+mixed_precision: False
+xla: False
+
+input_bands:
+  - B
+  - G
+  - R
+  - NIR
+  - DTM
+
+output_bands:
+  - B
+  - G
+  - R
+  - NIR
+  - DTM
+
+#substract_labels: True
+normalize: 1.0
+normalize_label: 1.0
+
+expand_dims: True
+tile_size: 256
+include_classes: False
+
+# 90/180 degree rotations not appropriate in Arctic,
+# could use smaller/jittered augmentation instead
+augment: True
+
+# standardization functions: local, global, mixed
+# global standardization
+# mixed standardization
+standardization: 'global'
+batch_size: 32
+n_classes: 1
+test_size: 0.20
+learning_rate: 0.00001
+max_epochs: 6000
+patience: 10
+
+model: 'tfc.model.networks.regression.regression_unet.unet_batchnorm_regression(nclass=1, input_size=(256, 256, 5), maps=[64, 128, 256, 512, 1024],final_activation="linear")'
+
+loss: 'tf.keras.losses.MeanAbsoluteError()'
+#loss: 'tf.keras.losses.MeanSquaredError()'
+
+optimizer: tf.keras.optimizers.Adam
+#optimizer: tf.keras.optimizers.RMSprop
+
+metrics:
+  - 'tf.keras.metrics.MeanSquaredError()'
+  - 'tf.keras.metrics.RootMeanSquaredError()'
+  - 'tf.keras.metrics.MeanAbsoluteError()'
+  - 'tfa.metrics.RSquare()'
+
+callbacks:
+  - "tf.keras.callbacks.ModelCheckpoint(save_best_only=True, mode='min', monitor='val_loss', filepath='${model_dir}/{epoch:02d}-{val_loss:.2f}.hdf5')"
+  - "tf.keras.callbacks.ReduceLROnPlateau(monitor='val_loss', factor=0.1, patience=5)"
+  - "tf.keras.callbacks.EarlyStopping(monitor='val_loss', patience=5, restore_best_weights=False)"
+  - "tf.keras.callbacks.TerminateOnNaN()"
+  - "tf.keras.callbacks.CSVLogger('${model_dir}/${experiment_name}.csv')"
+  - "tf.keras.callbacks.BackupAndRestore('${model_dir}/backup')"
+
+#------------------------------------- Inference -------------------------------------#
+
+window_size: 10000
+pred_batch_size: 128
+inference_overlap: 0.50
+inference_treshold: 0.50
+prediction_dtype: float32
+prediction_nodata: -9999
+
+# cloudmask_path: '/explore/nobackup/projects/ilab/data/srlite/products/srlite_1.0.1/cloudmask/*/*'
+cloudmask_path: '/explore/nobackup/projects/ilab/test/vhr-cloudmask/*/*'
+
+# Prediction location
+#model_filename: '/explore/nobackup/projects/ilab/projects/AIML_CHM/DEM_CHM/development/dem-test-v3/119-0.01.hdf5'
+model_filename: /explore/nobackup/people/mmacande/srlite/chm_model/20230515d_chm/models/cnn-chm-v1-noAug-invSqrt/34-8.27.hdf5
+inference_regex_list:
+  #- '/explore/nobackup/projects/ilab/data/srlite/products/srlite_1.0.1/srlite/alaska/split_2/WV03_20180919_M1BS_104001004254C200-sr-02m.tif'
+  #- '/explore/nobackup/projects/ilab/data/srlite/products/srlite_1.0.1/srlite/alaska/split_7/WV02_20140522_M1BS_103001003103B100-sr-02m.tif'
+  #- '/explore/nobackup/people/pmontesa/userfs02/projects/ilab/above_shrubs/data/stacks/WV03_20150614_M1BS_104001000DD12A00-sr-02m/*_pred_stack.tif'
+  #- '/explore/nobackup/people/pmontesa/userfs02/projects/ilab/above_shrubs/data/stacks/*/*_pred_stack.tif'
+  #- '/explore/nobackup/people/pmontesa/userfs02/projects/ilab/above_shrubs/data/stacks/WV02_20140522_M1BS_103001003103B100-sr-02m/*_pred_stack.tif'
+  #- '/explore/nobackup/projects/ilab/data/srlite/products/srlite_1.0.1/srlite/alaska/split_8/WV02_20140707_M1BS_103001003368B700-sr-02m.tif'
+  #- '/explore/nobackup/projects/ilab/data/srlite/products/srlite_1.0.1/srlite/alaska/split_7/WV02_20130822_M1BS_1030010026054000-sr-02m.tif'
+  #- '/explore/nobackup/projects/ilab/data/srlite/products/srlite_1.0.1/srlite/alaska/split_6/WV02_20100709_M1BS_1030010006AC3100-sr-02m.tif'
+  #- '/explore/nobackup/projects/ilab/projects/ABoVE-Shrubs/data/list_srlite_path_for_predstack.csv'
+  #- '/explore/nobackup/people/celee4/StereoPipeline-3.5.0-alpha-2024-07-30-x86_64-Linux/bin/IK01_2000061221061980000010006951_2000061221071350000010006953/2000061221061980000010006951-sr-02m.tif'
+  #- '/explore/nobackup/people/celee4/StereoPipeline-3.5.0-alpha-2024-07-30-x86_64-Linux/bin/IK01_2000060822003210000010004708_2000060822004260000010004709/2000060822003210000010004708-sr-02m.tif'
+  - /explore/nobackup/projects/above/misc/ABoVE_Shrubs/srlite_ak_2024/WV03_20210718_M1BS_104001006C895900_sr_02m.tif
+  - /explore/nobackup/projects/above/misc/ABoVE_Shrubs/srlite_ak_2024/WV02_20220801_M1BS_10300100D8887A00_sr_02m.tif
+  - /explore/nobackup/projects/above/misc/ABoVE_Shrubs/srlite_ak_2024/WV02_20230805_M1BS_10300100EB44FA00_sr_02m.tif
+  - /explore/nobackup/projects/above/misc/ABoVE_Shrubs/srlite_ak_2024/WV03_20230716_M1BS_104001008A3AD000_sr_02m.tif
+  - /explore/nobackup/projects/above/misc/ABoVE_Shrubs/srlite_ak_2024/WV03_20230716_M1BS_1040010086864D00_sr_02m.tif
+  - /explore/nobackup/projects/above/misc/ABoVE_Shrubs/srlite_ak_2024/WV03_20220802_M1BS_104001007A645900_sr_02m.tif
+  - /explore/nobackup/projects/above/misc/ABoVE_Shrubs/srlite_ak_2024/WV03_20220802_M1BS_104001007B744C00_sr_02m.tif
+  - /explore/nobackup/projects/above/misc/ABoVE_Shrubs/srlite_ak_2024/WV03_20220728_M1BS_1040010079A0BD00_sr_02m.tif
+  - /explore/nobackup/projects/above/misc/ABoVE_Shrubs/srlite_ak_2024/WV02_20220714_M1BS_10300100D644EA00_sr_02m.tif
+  - /explore/nobackup/projects/above/misc/ABoVE_Shrubs/srlite_ak_2024/WV02_20220802_M1BS_10300100D82F3A00_sr_02m.tif
+  - /explore/nobackup/projects/above/misc/ABoVE_Shrubs/srlite_ak_2024/QB02_20050705_M1BS_10100100045A0600_sr_02m.tif
+  - /explore/nobackup/projects/above/misc/ABoVE_Shrubs/srlite_ak_2024/QB02_20050704_M1BS_1010010004597B00_sr_02m.tif
+  - /explore/nobackup/projects/above/misc/ABoVE_Shrubs/srlite_ak_2024/QB02_20040701_M1BS_101001000311AF00_sr_02m.tif
+  - /explore/nobackup/projects/above/misc/ABoVE_Shrubs/srlite_ak_2024/QB02_20050817_M1BS_101001000474C600_sr_02m.tif
+  - /explore/nobackup/projects/above/misc/ABoVE_Shrubs/srlite_ak_2024/QB02_20040714_M1BS_10100100031C1B00_sr_02m.tif
+  - '/explore/nobackup/projects/above/misc/ABoVE_Shrubs/srlite_ak_2024/*_sr_02m.tif'
+  - '/explore/nobackup/projects/ilab/data/srlite/products/srlite-0.9.15-10282022-qa/10282022-all/Siberia/*.tif'
+  - '/explore/nobackup/projects/above/misc/ABoVE_Shrubs/footprints/fullpaths_srlite_chm_priority.csv'
+# inference_save_dir: /explore/nobackup/projects/ilab/projects/ABoVE-Shrubs/products/cnn-chm-v2-noAug-invSqrt
+# inference_save_dir: /explore/nobackup/projects/ilab/projects/ABoVE-Shrubs/products/test-christina
+inference_save_dir: '/explore/nobackup/projects/above/misc/ABoVE_Shrubs/development/chm/v2/2.2/dinov2_rs'
