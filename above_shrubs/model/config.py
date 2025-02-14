@@ -1,6 +1,32 @@
 from typing import Optional
 from dataclasses import dataclass
-from tensorflow_caney.model.config.cnn_config import Config
+from tensorflow_caney.model.config.cnn_config import Config as TFC_Config
+
+
+@dataclass
+class Config(TFC_Config):
+
+    # make data_dir optional for this iteration
+    data_dir: Optional[str] = None
+
+    # model directory to store model at
+    model_dir: Optional[str] = None
+
+    # project name specified for the configuration
+    project_name: Optional[str] = 'above_shrubs'
+
+    # model name to use
+    model_name: Optional[str] = 'custom_unet'
+
+    # version of the model to use
+    version: Optional[str] = '1.1.1'
+
+    # main directory to use for top level directory
+    main_dir: Optional[str] = 'output'
+
+    # directory where the original training and testing tiles are at
+    train_tiles_dir: Optional[str] = None
+    test_tiles_dir: Optional[str] = None
 
 
 @dataclass

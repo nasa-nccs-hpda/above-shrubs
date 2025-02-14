@@ -95,23 +95,28 @@ class CHMPipeline(CNNRegression):
             self.conf.inference_regex_list = inference_regex_list
 
         # output directory to store metadata and artifacts
-        self.metadata_dir = os.path.join(self.conf.data_dir, 'metadata')
+        self.metadata_dir = os.path.join(self.conf.model_dir, 'metadata')
         self.logger.info(f'Metadata dir: {self.metadata_dir}')
 
         # Set output directories and locations
-        self.images_dir = os.path.join(self.conf.data_dir, 'images')
-        self.logger.info(f'Images dir: {self.images_dir}')
+        self.train_images_dir = os.path.join(self.conf.train_tiles_dir, 'images')
+        self.logger.info(f'Train Images dir: {self.train_images_dir}')
 
-        self.labels_dir = os.path.join(self.conf.data_dir, 'labels')
-        self.logger.info(f'Labels dir: {self.labels_dir}')
+        self.train_labels_dir = os.path.join(self.conf.train_tiles_dir, 'labels')
+        self.logger.info(f'Train Labels dir: {self.train_labels_dir}')
+
+        # Set output directories and locations
+        self.test_images_dir = os.path.join(self.conf.test_tiles_dir, 'images')
+        self.logger.info(f'Train Images dir: {self.test_images_dir}')
+
+        self.test_labels_dir = os.path.join(self.conf.test_tiles_dir, 'labels')
+        self.logger.info(f'Train Labels dir: {self.test_labels_dir}')
 
         self.model_dir = self.conf.model_dir
         self.logger.info(f'Model dir: {self.model_dir}')
 
         # Create output directories
-        for out_dir in [
-                self.images_dir, self.labels_dir,
-                self.metadata_dir, self.model_dir]:
+        for out_dir in [self.metadata_dir, self.model_dir]:
             os.makedirs(out_dir, exist_ok=True)
 
         logging.info(f'Output dir: {self.conf.inference_save_dir}')
@@ -309,8 +314,8 @@ class CHMPipeline(CNNRegression):
         logging.info('Starting preprocessing stage')
 
         # Calculate mean and std values for training
-        data_filenames = get_dataset_filenames(self.images_dir)
-        label_filenames = get_dataset_filenames(self.labels_dir)
+        data_filenames = get_dataset_filenames(self.train_images_dir)
+        label_filenames = get_dataset_filenames(self.train_labels_dir)
         logging.info(f'Mean and std values from {len(data_filenames)} files.')
 
         # Temporarily disable standardization and augmentation
@@ -322,7 +327,12 @@ class CHMPipeline(CNNRegression):
 
         # Set main data loader
         main_data_loader = RegressionDataLoaderSRLite(
-            data_filenames, label_filenames, self.conf, False
+            self.conf,
+            data_filenames,
+            label_filenames,
+            None,
+            None,
+            False
         )
 
         # Get mean and std array
@@ -348,17 +358,32 @@ class CHMPipeline(CNNRegression):
         set_xla(self.conf.xla)
 
         # Get data and label filenames for training
-        data_filenames = get_dataset_filenames(self.images_dir)
-        label_filenames = get_dataset_filenames(self.labels_dir)
-        assert len(data_filenames) == len(label_filenames), \
+        train_data_filenames = get_dataset_filenames(self.train_images_dir)
+        train_label_filenames = get_dataset_filenames(self.train_labels_dir)
+        assert len(train_data_filenames) == len(train_label_filenames), \
+            'Number of data and label filenames do not match'
+
+        # Get data and label filenames for testing
+        test_data_filenames = get_dataset_filenames(self.test_images_dir)
+        test_label_filenames = get_dataset_filenames(self.test_labels_dir)
+        assert len(test_data_filenames) == len(test_label_filenames), \
             'Number of data and label filenames do not match'
 
         logging.info(
-            f'Data: {len(data_filenames)}, Label: {len(label_filenames)}')
+            f'Train Data: {len(train_data_filenames)}, ' +
+            f'Train Label: {len(train_label_filenames)}')
+        logging.info(
+            f'Test Data: {len(train_data_filenames)}, ' +
+            f'Test Label: {len(train_label_filenames)}')
 
         # Set main data loader
         main_data_loader = RegressionDataLoaderSRLite(
-            data_filenames, label_filenames, self.conf
+            self.conf,
+            train_data_filenames,
+            train_label_filenames,
+            test_data_filenames,
+            test_label_filenames,
+            train_step=True,
         )
 
         # Set multi-GPU training strategy
@@ -425,10 +450,10 @@ class CHMPipeline(CNNRegression):
         # Fit the model and start training
         model.fit(
             main_data_loader.train_dataset,
-            validation_data=main_data_loader.val_dataset,
+            validation_data=main_data_loader.test_dataset,
             epochs=self.conf.max_epochs,
             steps_per_epoch=main_data_loader.train_steps,
-            validation_steps=main_data_loader.val_steps,
+            validation_steps=main_data_loader.test_steps,
             callbacks=get_callbacks(self.conf.callbacks)
         )
         logging.info(f'Done with training, models saved: {self.model_dir}')
@@ -483,13 +508,11 @@ class CHMPipeline(CNNRegression):
             start_time = time.time()
 
             # set output directory
-            output_directory = os.path.join(
-                self.conf.inference_save_dir, Path(filename).stem)
-            os.makedirs(output_directory, exist_ok=True)
+            os.makedirs(self.conf.inference_save_dir, exist_ok=True)
 
             # set prediction output filename
             output_filename = os.path.join(
-                output_directory,
+                self.conf.inference_save_dir,
                 f'{Path(filename).stem}.{self.conf.experiment_type}.tif')
 
             # lock file for multi-node, multi-processing
@@ -557,7 +580,8 @@ class CHMPipeline(CNNRegression):
 
                 # add DTM
                 logging.info('Adding DTM layer')
-                if image.shape[0] != len(self.conf.output_bands):
+                # if image.shape[0] != len(self.conf.output_bands):
+                if 'dtm' in list(map(str.lower, self.conf.output_bands)):
                     image = self.add_dtm(filename, image, self.conf.dtm_path)
                     logging.info(f'Prediction shape after modf: {image.shape}')
 
