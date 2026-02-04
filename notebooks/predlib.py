@@ -16,7 +16,10 @@ import footprintlib
 
 from osgeo import gdal
 
-def gdal_merge_gtiff_stack(out_fn, fn_sr, fn_warp_dtm, GDAL_MERGE_PATH = '/panfs/ccds02/app/modules/anaconda/platform/x86_64/rhel/8.6/3-2022.05/envs/ilab-tensorflow/bin'):
+def gdal_merge_gtiff_stack(out_fn, fn_sr, 
+                           fn_warp_dtm, 
+                           GDAL_MERGE_PATH = '/explore/app/modules/anaconda/platform/x86_64/rhel/8.6/3-2022.05/envs/ilab-tensorflow/bin'
+                          ):
     
     gdal_cmd = [f"{os.path.join(GDAL_MERGE_PATH, 'gdal_merge.py')}", "-o", out_fn, "-separate", "-of", "gtiff", fn_sr, fn_warp_dtm]
     print(gdal_cmd)
@@ -27,7 +30,7 @@ def gdal_merge_gtiff_stack(out_fn, fn_sr, fn_warp_dtm, GDAL_MERGE_PATH = '/panfs
 
 def do_pred_stack(fn_sr, dtm_path, outdir):
 
-    GDAL_MERGE_PATH = '/panfs/ccds02/app/modules/anaconda/platform/x86_64/rhel/8.6/3-2022.05/envs/ilab-tensorflow/bin/'
+    GDAL_MERGE_PATH = '/explore/app/modules/anaconda/platform/x86_64/rhel/8.6/3-2022.05/envs/ilab-tensorflow/bin/'
     
     f = os.path.basename(fn_sr).replace('.tif','')
     print(f)
@@ -36,7 +39,9 @@ def do_pred_stack(fn_sr, dtm_path, outdir):
     if not os.path.exists(outdir_stack): os.makedirs(outdir_stack)
     
     # Warp the DTM to the SRlite
-    warp_ds_list = warplib.diskwarp_multi_fn([fn_sr, dtm_path], res=fn_sr, extent=fn_sr, t_srs=fn_sr, r='bicubic', dst_ndv=-10001, outdir=outdir_stack, verbose=False)
+    warp_ds_list = warplib.diskwarp_multi_fn([fn_sr, dtm_path], res=fn_sr, 
+                                             extent=fn_sr, t_srs=fn_sr, r='bicubic', 
+                                             dst_ndv=-10001, outdir=outdir_stack, verbose=False)
     
     # Need to apply common mask before saving
     
@@ -59,7 +64,19 @@ def do_pred_stack(fn_sr, dtm_path, outdir):
     
     return out_fn
 
-def validate_chm_pred(pred_fn, lvis_fn, RH_string, index_of_scaling = 0, scale_factor=1, CHM_LIMS=(0,15), TCC_LIMS=(0,100), RES=30, SRC_NAME='CNN CHM', RETURN_DF=False, DST_NDV=None, DEBUG=False):
+def validate_chm_pred(pred_fn, 
+                      lvis_fn, 
+                      RH_string, 
+                      index_of_scaling = 0, 
+                      scale_factor=1, 
+                      CHM_LIMS=(0,15), 
+                      TCC_LIMS=(0,100), 
+                      RES=30, 
+                      SRC_NAME='CNN CHM', 
+                      RETURN_DF=False, 
+                      DST_NDV=None, 
+                      DEBUG=False
+                     ):
     
     '''Validate a predicted CHM with LVIS
     Note: setting DST_NDV= None means the individual nodata values will be read from each input and set individually - this is best
@@ -198,7 +215,10 @@ def tcc_classifier(row):
         #row["tcc_ref"] > 0.8 * 1e4 and row["tcc_ref"] <= 1.0 * 1e4:
         return "81-100%"
         
-def build_pred_obs(warp_ma_masked_list, RETURN_DF=False, OUT_COLS_LIST=['ht_m_src','ht_m_ref','tcc_ref','slope_ref','cnt_ref']):
+def build_pred_obs(warp_ma_masked_list, 
+                   RETURN_DF=False, 
+                   OUT_COLS_LIST=['ht_m_src','ht_m_ref','tcc_ref','slope_ref','cnt_ref']
+                  ):
     
     '''Pred and Obs vectors/data frame
     with TCC and other covars
@@ -235,7 +255,15 @@ def build_pred_obs(warp_ma_masked_list, RETURN_DF=False, OUT_COLS_LIST=['ht_m_sr
     else:
         return y_var, x_var, tcc,slope,cnt
     
-def plot_maps(masked_array_list, names_list, figsize=None, cmap_list=None, clim_list=None, title_text="", map_label='Reflectance (%)', COLORBAR_EXTEND_DIR='max'):
+def plot_maps(masked_array_list, 
+              names_list, 
+              figsize=None, 
+              cmap_list=None, 
+              clim_list=None, 
+              title_text="", 
+              map_label='Reflectance (%)', 
+              COLORBAR_EXTEND_DIR='max'
+             ):
     
     if figsize is None:
         figsize = (len(names_list) * 7,5)
@@ -250,6 +278,7 @@ def plot_maps(masked_array_list, names_list, figsize=None, cmap_list=None, clim_
             #print(ma.mask)
         
         if cmap_list is None:
+            
             cmap = 'magma'
             # For TCC, in position 3
             if i == 2:
