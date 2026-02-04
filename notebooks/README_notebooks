@@ -1,0 +1,4 @@
+1. Vegetation_CHM_visual.ipynb - notebook to make a visual comparing SRLite NRG (image chip), LIDAR (chm chip), and IFSAR (chm chip) data from the same location.
+ - Notebook does a spatial join to find IFSAR data in the same region as the LIDAR data, and clips the SRLite and IFSAR to the footprint in the LIDAR file
+ - Can run block 5 at bottom to visually inspect outputs for training chips that meet the vegetation types of interest. Our study focused on "Tundra", "Woody (sparse)", "Woody (dense)", and "Mixed". 
+ - Once rows are selected, can run block 4 to create a visual of the SRLite, LIDAR, and IFSAR chips of each of the 4 vegeation type examples. 
