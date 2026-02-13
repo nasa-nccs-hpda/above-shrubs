@@ -37,6 +37,7 @@ parse_source_filename <- function(filename) {
 get_lvis_mosaic_for_catid <- function(catid, 
                                       val_csv_dir,
                                       lvis_grid_dir,
+                                      LVIS_RH_STR = 'RH098',
                                       crop_extent = NULL,
                                       target_crs = NULL,
                                       verbose = TRUE) {
@@ -45,6 +46,7 @@ get_lvis_mosaic_for_catid <- function(catid,
   #' @param catid The catid value to search for in CSV filenames
   #' @param val_csv_dir Directory containing validation CSV files
   #' @param lvis_grid_dir Directory containing LVIS grid TIF files
+  #' @param LVIS_RH_STR string of the LVIS rh metric used in the name of the corresponding rh metric .tif
   #' @param crop_extent Optional terra extent object to crop the mosaic
   #' @param target_crs Optional CRS to reproject the mosaic to
   #' @param verbose Logical, print debug information
@@ -54,7 +56,7 @@ get_lvis_mosaic_for_catid <- function(catid,
   library(dplyr)
   
   if (verbose) {
-    cat("\n=== LVIS Mosaic Creation ===\n")
+    cat("\n=== LVIS ", LVIS_RH_STR , " Mosaic Creation ===\n")
     cat("Searching for catid:", catid, "in", val_csv_dir, "\n")
   }
   
@@ -112,23 +114,23 @@ get_lvis_mosaic_for_catid <- function(catid,
   
   for (lvis_id in lvis_ids) {
     # Construct expected filename: LVISF2_ABoVE2019_0722_R2003_070510_RH098_mean_30m.tif
-    tif_name <- paste0(lvis_id, "_RH098_mean_30m.tif")
+    tif_name <- paste0(lvis_id, "_",LVIS_RH_STR,"_mean_30m.tif")
     tif_path <- file.path(lvis_grid_dir, tif_name)
     
     if (file.exists(tif_path)) {
       lvis_tif_paths <- c(lvis_tif_paths, tif_path)
-      if (verbose) cat("Found LVIS grid:", tif_name, "\n")
+      if (verbose) cat("Found LVIS ", LVIS_RH_STR," grid:", tif_name, "\n")
     } else {
-      if (verbose) cat("WARNING: LVIS grid not found:", tif_name, "\n")
+      if (verbose) cat("WARNING: LVIS ", LVIS_RH_STR," grid not found:", tif_name, "\n")
     }
   }
   
   if (length(lvis_tif_paths) == 0) {
-    if (verbose) cat("No LVIS grid TIF files found\n")
+    if (verbose) cat("No LVIS ", LVIS_RH_STR," grid TIF files found\n")
     return(NULL)
   }
   
-  if (verbose) cat("Loading", length(lvis_tif_paths), "LVIS grid(s)...\n")
+  if (verbose) cat("Loading", length(lvis_tif_paths), "LVIS ", LVIS_RH_STR," grid(s)...\n")
   
   # Load all LVIS rasters
   lvis_rasters <- lapply(lvis_tif_paths, rast)
@@ -177,6 +179,7 @@ map_raster_by_catid <- function(catid,
                                 source_dir = NULL,
                                 val_csv_dir = NULL,  # ADD THIS
                                 lvis_grid_dir = NULL,  # ADD THIS
+                                lvis_rh_str = 'RH098',
                                 colorbar = "plasma",
                                 fill_label = "Value",
                                 plot_title = NULL,
@@ -203,11 +206,11 @@ map_raster_by_catid <- function(catid,
   has_ggspatial <- requireNamespace("ggspatial", quietly = TRUE)
   
   get_crs_name <- function(raster) {
-    crs_str <- crs(raster, describe = TRUE)
+    crs_str <- terra::crs(raster, describe = TRUE)
     if (!is.null(crs_str$name) && crs_str$name != "") {
       return(crs_str$name)
     } else {
-      proj_str <- as.character(crs(raster))
+      proj_str <- as.character(terra::crs(raster))
       if (grepl("UTM", proj_str, ignore.case = TRUE)) {
         zone <- sub(".*zone=([0-9]+).*", "\\1", proj_str)
         return(paste0("UTM Zone ", zone))
@@ -366,7 +369,7 @@ map_raster_by_catid <- function(catid,
       fill = fill_label,
       x = NULL,
       y = NULL,
-      title = plot_title #, subtitle = catid
+      title = plot_title , subtitle = paste0("Fine-tuned DINOv3 model on ", parsed_filename$sensor, ': ', parsed_filename$date_obj)
     ) +
     theme_bw() +
     theme(
@@ -527,7 +530,7 @@ map_raster_by_catid <- function(catid,
         x = NULL,
         y = NULL,
         title = paste("Commercial VHR surface reflectance"), 
-          subtitle = paste0(parsed_filename$sensor, ': ', parsed_filename$date_obj, ' ', catid)
+          subtitle = paste0(parsed_filename$sensor, ': ', parsed_filename$date_obj, ' (id: ', catid,')')
       ) +
       theme_bw() +
       theme(
@@ -536,7 +539,7 @@ map_raster_by_catid <- function(catid,
         axis.text.x = element_text(angle = 0, hjust = 0.5),
         aspect.ratio = diff(ylim_display) / diff(xlim_display),
         plot.caption = element_text(size = 6, color = "gray40")
-      )
+      ) 
 
 
     if (verbose) cat("Combining plots...\n")
@@ -554,6 +557,7 @@ map_raster_by_catid <- function(catid,
         catid = catid,
         val_csv_dir = val_csv_dir,
         lvis_grid_dir = lvis_grid_dir,
+        LVIS_RH_STR = lvis_rh_str,
         crop_extent = ext(r_native),
         target_crs = chm_crs,
         verbose = verbose
@@ -610,7 +614,7 @@ map_raster_by_catid <- function(catid,
             fill = fill_label,
             x = NULL,
             y = NULL,
-            title = "Reference vegetation height", subtitle = 'airborne LIDAR: 30m LVIS mean RH98 (2017/2019)'
+            title = "Reference vegetation height", subtitle = paste0('airborne LIDAR: 30m LVIS mean ', lvis_rh_str,' (2017/2019)')
           ) +
           theme_bw() +
           theme(

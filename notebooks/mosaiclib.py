@@ -11,7 +11,13 @@ This module creates memory-efficient mosaics by:
 6. Writing Cloud-Optimized GeoTIFFs (COGs)
 7. Creating VRT for seamless viewing
 
-Author: NASA CSDA Team
+# Flag values:
+#  0  = Valid data
+# -1  = Non-valid data (clouds/cloud shadows/quality issues from dm-10m mask)
+# -2  = No images available (no coverage in time/month window)
+# -3  = Outside AOI boundary
+
+Author: Paul Montesano
 Date: 2026-01-02
 """
 
@@ -320,18 +326,36 @@ def apply_mask_from_coarse_data(target_raster_path, mask_footprints_gdf,
         mask_path = os.path.join(mask_row['path'], mask_row['file'])
         
         if not os.path.exists(mask_path):
-            print(f"  Warning: Mask file not found: {mask_path}")
+            print(f"    Warning: Mask file not found: {mask_path}")
             continue
+        
+        # Print mask date info if available
+        mask_date_info = ""
+        if 'date' in mask_row:
+            mask_date_info = f" | Date: {mask_row['date']}"
+        if 'month' in mask_row:
+            mask_date_info += f" | Month: {mask_row['month']}"
         
         try:
             with rasterio.open(mask_path) as mask_src:
+                print(f"    Processing mask: {os.path.basename(mask_path)}{mask_date_info}")
+                print(f"      Mask CRS: {mask_src.crs}")
+                print(f"      Target CRS: {target_crs}")
+                print(f"      Mask shape: {mask_src.shape}")
+                print(f"      Target shape: ({target_height}, {target_width})")
+                
                 # Read mask data
                 mask_data = mask_src.read(1)
+                mask_nodata = mask_src.nodata
                 
-                # Reproject mask to target resolution and extent
+                #print(f"      Mask nodata value: {mask_nodata}")
+                #print(f"      Mask unique values: {np.unique(mask_data)}")
+                
+                # Initialize reprojected mask
                 mask_reprojected = np.zeros((target_height, target_width), 
                                              dtype=mask_data.dtype)
                 
+                # Reproject mask from Albers to UTM (or whatever target CRS is)
                 reproject(
                     source=mask_data,
                     destination=mask_reprojected,
@@ -339,19 +363,113 @@ def apply_mask_from_coarse_data(target_raster_path, mask_footprints_gdf,
                     src_crs=mask_src.crs,
                     dst_transform=target_transform,
                     dst_crs=target_crs,
-                    resampling=Resampling.nearest
+                    resampling=Resampling.nearest  # Use nearest for categorical mask data
                 )
                 
+                #print(f"      Reprojected unique values: {np.unique(mask_reprojected)}")
+                
+                # Determine valid pixels based on mask values
+                # For dm-10m masks: valid data is >= 0, invalid is nodata
+                if mask_nodata is not None:
+                    # Valid = anything that is NOT nodata (including 0)
+                    valid_in_mask = (mask_reprojected != mask_nodata)
+                    print(f"      Using nodata={mask_nodata} as invalid, all other values (>=0) as valid")
+                    print(f"      Valid value range in mask: {mask_reprojected[valid_in_mask].min():.1f} to {mask_reprojected[valid_in_mask].max():.1f}")
+                else:
+                    # If no nodata defined, assume all finite values are valid
+                    valid_in_mask = np.isfinite(mask_reprojected)
+                    print(f"      No nodata value defined, using all finite values as valid")
+                
+                n_valid = np.sum(valid_in_mask)
+                n_total = valid_in_mask.size
+                print(f"      Valid pixels after reprojection: {n_valid:,}/{n_total:,} ({100*n_valid/n_total:.1f}%)")
+                
                 # Update combined mask (True = valid)
-                # Assume mask values: 0 = invalid, >0 = valid
-                combined_mask = combined_mask | (mask_reprojected > 0)
+                combined_mask = combined_mask | valid_in_mask
                 
         except Exception as e:
-            print(f"  Warning: Failed to process mask {mask_path}: {e}")
+            print(f"    Warning: Failed to process mask {mask_path}: {e}")
             continue
     
-    return combined_mask
+    # Calculate final combined mask statistics
+    n_valid_final = np.sum(combined_mask)
+    n_total_final = combined_mask.size
+    print(f"  Final combined mask: {n_valid_final:,}/{n_total_final:,} valid ({100*n_valid_final/n_total_final:.1f}%)")
     
+    return combined_mask
+
+def get_mask_for_raster(raster_path, mask_footprints_gdf, tile_bounds, tile_crs, 
+                        target_height, target_width):
+    """
+    Get the specific mask for a single raster file.
+    
+    Matches by finding the dm-10m file that corresponds to the 2m CHM file.
+    """
+    import os
+    
+    # Extract base name from raster (remove -sr-02m.chm.tif, add -chm-dm-10m.tif)
+    raster_basename = os.path.basename(raster_path)
+    
+    # Convert CHM filename to DM filename
+    # Example: WV02_20180831_M1BS_1030010081AF0800-sr-02m.chm.tif
+    #       -> WV02_20180831_M1BS_1030010081AF0800-chm-dm-10m.tif
+    dm_filename = raster_basename.replace('-sr-02m.chm.tif', '-chm-dm-10m.tif')
+    
+    # Find the matching mask in mask_footprints_gdf
+    matching_masks = mask_footprints_gdf[mask_footprints_gdf['file'] == dm_filename]
+    
+    if len(matching_masks) == 0:
+        print(f"    Warning: No matching dm-10m mask found for {raster_basename}")
+        return None
+    
+    if len(matching_masks) > 1:
+        print(f"    Warning: Multiple masks found for {raster_basename}, using first")
+    
+    # Get the mask file path
+    mask_row = matching_masks.iloc[0]
+    mask_path = os.path.join(mask_row['path'], mask_row['file'])
+    
+    if not os.path.exists(mask_path):
+        print(f"    Warning: Mask file not found: {mask_path}")
+        return None
+    
+    print(f"    Loading mask: {dm_filename}")
+    
+    # Load and reproject the mask
+    try:
+        with rasterio.open(mask_path) as mask_src:
+            mask_data = mask_src.read(1)
+            mask_nodata = mask_src.nodata
+            
+            # Initialize reprojected mask
+            mask_reprojected = np.zeros((target_height, target_width), dtype=mask_data.dtype)
+            
+            # Reproject mask
+            reproject(
+                source=mask_data,
+                destination=mask_reprojected,
+                src_transform=mask_src.transform,
+                src_crs=mask_src.crs,
+                dst_transform=rasterio.transform.from_bounds(*tile_bounds, target_width, target_height),
+                dst_crs=tile_crs,
+                resampling=Resampling.nearest
+            )
+            
+            # Determine valid pixels
+            if mask_nodata is not None:
+                valid_mask = (mask_reprojected != mask_nodata)
+            else:
+                valid_mask = np.isfinite(mask_reprojected)
+            
+            n_valid = np.sum(valid_mask)
+            print(f"      Valid pixels: {n_valid:,}/{valid_mask.size:,} ({100*n_valid/valid_mask.size:.1f}%)")
+            
+            return valid_mask
+            
+    except Exception as e:
+        print(f"    Warning: Failed to load mask {mask_path}: {e}")
+        return None
+
 # =============================================================================
 # TILE MOSAICKING
 # =============================================================================
@@ -359,7 +477,7 @@ def apply_mask_from_coarse_data(target_raster_path, mask_footprints_gdf,
 def mosaic_tile(tile_row, grid_gdf, footprints_gdf, output_dir, target_year, 
                 target_doy=212, delta_years=5, output_resolution=0.5,
                 mask_footprints_gdf=None, mosaic_method='first',
-                include_months=None):
+                include_months=None, aoi_mask=None):
     """
     Create mosaic for a single grid tile.
     
@@ -449,7 +567,7 @@ def mosaic_tile(tile_row, grid_gdf, footprints_gdf, output_dir, target_year,
         output_height
     )
     
-    # Get metadata from first valid raster
+    # Get metadata from first valid raster (for data type and structure only)
     first_raster_meta = None
     n_valid_files = 0
     for idx, fp_row in prioritized_fps.iterrows():
@@ -465,11 +583,12 @@ def mosaic_tile(tile_row, grid_gdf, footprints_gdf, output_dir, target_year,
             with rasterio.open(raster_path) as src:
                 first_raster_meta = {
                     'count': src.count,
-                    'dtype': src.dtypes[0],  # Get dtype from first band
+                    'dtype': src.dtypes[0],
                     'nodata': src.nodata if src.nodata is not None else 0
                 }
-                print(f"  Using metadata from: {os.path.basename(raster_path)}")
-                print(f"    Bands: {src.count}, Dtype: {src.dtypes[0]}, Nodata: {src.nodata}")
+                print(f"  Reading metadata (dtype, nodata) from: {os.path.basename(raster_path)}")
+                print(f"    Dtype: {src.dtypes[0]}, Nodata: {src.nodata}")
+                print(f"    Note: Year/DOY will be assigned per-pixel based on source raster")
                 break
         except Exception as e:
             print(f"  Warning: Failed to open {raster_path}: {e}")
@@ -490,163 +609,277 @@ def mosaic_tile(tile_row, grid_gdf, footprints_gdf, output_dir, target_year,
     n_bands = first_raster_meta['count']
     nodata_value = first_raster_meta['nodata']
     
-    # Initialize 3-band output array
+    # Initialize 4-band output array
     # Band 1: Raster value (vegetation height)
     # Band 2: Year
     # Band 3: Day of Year
+    # Band 4: Nodata flag
     mosaic_data = np.full((3, output_height, output_width), 
                           nodata_value, 
                           dtype=first_raster_meta['dtype'])
     
-    # Create a mask to track which pixels have been filled
+    # Initialize flag band (int8 to save space)
+    # Flags: 0=valid data, -1=non-valid (cloud/shadows/out-of-raster-data-extent/quality), -2=no images, -3=outside AOI
+    flag_band = np.zeros((output_height, output_width), dtype=np.int8)
+    
+    # Create masks to track different conditions
+    filled_mask = np.zeros((output_height, output_width), dtype=bool)
+    non_valid_pixels = np.zeros((output_height, output_width), dtype=bool)  # Tracks dm masked pixels
+    
+    # Create list of all rasters with their temporal scores
+    raster_list = []
+    for idx, fp_row in prioritized_fps.iterrows():
+        raster_path = os.path.join(fp_row['path'], fp_row['file'])
+        if os.path.exists(raster_path):
+            raster_list.append({
+                'path': raster_path,
+                'year': fp_row['year'],
+                'month': fp_row['month'],
+                'day': fp_row['day'],
+                'temporal_score': fp_row['temporal_score']
+            })
+
+    # ADD THIS DIAGNOSTIC
+    if raster_list:
+        months_in_list = sorted(set(r['month'] for r in raster_list))
+        print(f"  Months in raster_list: {months_in_list}")
+        if include_months is not None:
+            unexpected_months = set(months_in_list) - set(include_months)
+            if unexpected_months:
+                print(f"  WARNING: Found unexpected months: {unexpected_months}")
+    
+    if len(raster_list) == 0:
+        print(f"  No valid raster files found for tile {tile_id}")
+        return {
+            'tile_id': tile_id,
+            'success': False,
+            'output_path': None,
+            'message': 'No valid raster files'
+        }
+    
+    print(f"  Processing {len(raster_list)} rasters with priority filling")
+    print(f"  Temporal score range: {min(r['temporal_score'] for r in raster_list):.0f} - "
+          f"{max(r['temporal_score'] for r in raster_list):.0f} days")
+    
+    # Initialize arrays to store best value and its priority for each pixel
+    # Priority is temporal_score (lower = better)
+    best_value = np.full((output_height, output_width), nodata_value, dtype=first_raster_meta['dtype'])
+    best_priority = np.full((output_height, output_width), np.inf, dtype=np.float32)
+    best_year = np.zeros((output_height, output_width), dtype=np.int16)
+    best_doy = np.zeros((output_height, output_width), dtype=np.int16)
+    
+    # Track which pixels have been filled
     filled_mask = np.zeros((output_height, output_width), dtype=bool)
     
-    # Group rasters by temporal score to handle ties
-    score_groups = {}
-    for idx, fp_row in prioritized_fps.iterrows():
-        score = fp_row['temporal_score']
-        if score not in score_groups:
-            score_groups[score] = []
-        score_groups[score].append(fp_row)
-    
-    print(f"  Processing {len(score_groups)} temporal score groups")
-    
-    # Process rasters in order of temporal score - ONE AT A TIME
-    for score in sorted(score_groups.keys()):
-        group = score_groups[score]
+    # Process each raster in order of temporal priority
+    n_rasters_used = 0
+    for raster_info in raster_list:
+        raster_path = raster_info['path']
+        temporal_score = raster_info['temporal_score']
         
-        if len(group) == 1:
-            # Single raster for this temporal score - use 'first' method
-            fp_row = group[0]
-            raster_path = os.path.join(fp_row['path'], fp_row['file'])
-            
-            if not os.path.exists(raster_path):
-                continue
-            
-            try:
-                # Open and warp raster - process immediately, don't store
-                with rasterio.open(raster_path) as src:
-                    with WarpedVRT(
-                        src,
-                        crs=tile_crs,
-                        resampling=Resampling.bilinear,
-                        transform=output_transform,
-                        width=output_width,
-                        height=output_height
-                    ) as vrt:
-                        # Read data
-                        data = vrt.read()
+        try:
+            with rasterio.open(raster_path) as src:
+                with WarpedVRT(
+                    src,
+                    crs=tile_crs,
+                    resampling=Resampling.bilinear,
+                    transform=output_transform,
+                    width=output_width,
+                    height=output_height
+                ) as vrt:
+                    # Read data
+                    data = vrt.read(1)
+                    
+                    # Apply raster-specific mask if available
+                    if mask_footprints_gdf is not None:
+                        raster_mask = get_mask_for_raster(
+                            raster_path,
+                            mask_footprints_gdf,
+                            tile_bounds,
+                            tile_crs,
+                            output_height,
+                            output_width
+                        )
                         
-                        # Apply mask from coarse data if provided
-                        if mask_footprints_gdf is not None:
-                            mask = apply_mask_from_coarse_data(
-                                raster_path, 
-                                mask_footprints_gdf,
-                                tile_bounds,
-                                tile_crs,
-                                output_height,
-                                output_width
-                            )
-                            if mask is not None and mask.shape == (output_height, output_width):
-                                # Apply mask to all bands
-                                for band in range(n_bands):
-                                    data[band][~mask] = nodata_value
-                        
-                        # Find valid pixels that haven't been filled yet
-                        valid_mask = (data[0] != nodata_value) & ~filled_mask
+                        if raster_mask is not None and raster_mask.shape == (output_height, output_width):
+                            n_valid_before = np.sum(data != nodata_value)
+                            data[~raster_mask] = nodata_value
+                            n_valid_after = np.sum(data != nodata_value)
+                            n_masked = n_valid_before - n_valid_after
+                            if n_masked > 0:
+                                print(f"      Masked out {n_masked:,} pixels ({100*n_masked/n_valid_before:.1f}% of valid data)")
+                            
+                            # Track non-valid pixels for flag assignment
+                            non_valid_pixels = non_valid_pixels | ~raster_mask
+                    
+                    # Find valid pixels in this raster
+                    valid_pixels = (data != nodata_value)
+                    
+                    # Find pixels where this raster has better (lower) priority than current best
+                    # OR where current best is still nodata
+                    better_priority = (temporal_score < best_priority) | ((best_value == nodata_value) & valid_pixels)
+                    
+                    # Update pixels that have better priority
+                    update_mask = valid_pixels & better_priority
+                    
+                    if np.any(update_mask):
+                        best_value[update_mask] = data[update_mask]
+                        best_priority[update_mask] = temporal_score
                         
                         # Calculate DOY
-                        doy_val = datetime(int(fp_row['year']), 
-                                         int(fp_row['month']), 
-                                         int(fp_row['day'])).timetuple().tm_yday
+                        doy_val = datetime(int(raster_info['year']), 
+                                         int(raster_info['month']), 
+                                         int(raster_info['day'])).timetuple().tm_yday
                         
-                        # Fill mosaic - Band 1: raster value, Band 2: year, Band 3: DOY
-                        mosaic_data[0][valid_mask] = data[0][valid_mask]  # Raster value
-                        mosaic_data[1][valid_mask] = fp_row['year']       # Year
-                        mosaic_data[2][valid_mask] = doy_val              # Day of Year
+                        best_year[update_mask] = raster_info['year']
+                        best_doy[update_mask] = doy_val
+                        filled_mask = filled_mask | update_mask
                         
-                        filled_mask = filled_mask | valid_mask
+                        n_updated = np.sum(update_mask)
+                        n_rasters_used += 1
                         
-                        # Free memory
-                        del data
+                        # Format date string
+                        date_str = f"{raster_info['year']}-{raster_info['month']:02d}-{raster_info['day']:02d}"
                         
-            except Exception as e:
-                print(f"  Warning: Failed to read {raster_path}: {e}")
-                continue
+                        print(f"    Raster {n_rasters_used}/{len(raster_list)}: {os.path.basename(raster_path)}")
+                        print(f"      Date: {date_str} | Temporal score: {temporal_score:.0f} days")
+                        print(f"      Pixels used: {n_updated:,} | Total valid in raster: {np.sum(valid_pixels):,}")
+                    
+                    # Free memory
+                    del data
+                    
+        except Exception as e:
+            print(f"  Warning: Failed to read {raster_path}: {e}")
+            continue
+    
+    # Assign final values to mosaic bands
+    mosaic_data[0] = best_value   # Band 1: Raster value
+    mosaic_data[1] = best_year    # Band 2: Year
+    mosaic_data[2] = best_doy     # Band 3: Day of Year
+    
+    # ============================================================================
+    # ASSIGN FLAGS IN PRIORITY ORDER (most specific to least specific)
+    # ============================================================================
+    
+    # Start with all pixels = 0 (will be overwritten for nodata pixels)
+    flag_band[:] = 0
+    
+    # 1. Flag non-valid pixels (clouds/shadows/quality) = -1
+    #    These pixels are masked by dm-10m (not valid data)
+    flag_band[non_valid_pixels] = -1
+    
+    # 2. Flag pixels with no images available in time window = -2
+    #    These pixels had no coverage at all in the specified time/month window
+    no_images_available = ~filled_mask & ~non_valid_pixels
+    flag_band[no_images_available] = -2
+    
+    # 3. Valid data = 0
+    #    Pixels that were successfully filled keep flag = 0
+    flag_band[filled_mask] = 0
+    
+    print(f"\n  === FLAG ASSIGNMENT (before AOI mask) ===")
+    print(f"    Valid data (0):                                         {np.sum(flag_band == 0):,} pixels")
+    print(f"    Non-valid data (cloud/shadows/s/outside extent) (-1):   {np.sum(flag_band == -1):,} pixels")
+    print(f"    No images available (-2):                               {np.sum(flag_band == -2):,} pixels")
+    
+    # Apply AOI mask as final filter if provided
+    if aoi_mask is not None:
+        print(f"\n  Applying AOI mask...")
+        try:
+            # Rasterize AOI to match output extent
+            from rasterio.features import rasterize
+            from shapely.geometry import mapping
             
-        else:
-            # Multiple rasters with same temporal score - use 'mean'
-            print(f"  Using mean for {len(group)} rasters with score {score}")
+            # Create AOI mask array
+            aoi_shapes = [(mapping(geom), 1) for geom in aoi_mask.geometry]
+            aoi_raster = rasterize(
+                aoi_shapes,
+                out_shape=(output_height, output_width),
+                transform=output_transform,
+                fill=0,
+                dtype=np.uint8
+            )
             
-            # Initialize accumulators for the raster value (band 1 only)
-            sum_data = np.zeros((output_height, output_width), dtype=np.float64)
-            count_data = np.zeros((output_height, output_width), dtype=np.int16)
+            # Convert to boolean (1 = inside AOI, 0 = outside)
+            aoi_valid = aoi_raster > 0
             
-            # Read each raster one at a time
-            for fp_row in group:
-                raster_path = os.path.join(fp_row['path'], fp_row['file'])
+            # Count pixels before masking
+            n_valid_before = np.sum(filled_mask)
+            
+            # Apply AOI mask (set pixels outside AOI to nodata)
+            outside_aoi = ~aoi_valid
+            
+            # Set data to nodata for pixels outside AOI
+            mosaic_data[0][outside_aoi] = nodata_value
+            mosaic_data[1][outside_aoi] = 0
+            mosaic_data[2][outside_aoi] = 0
+            
+            # 5. Flag pixels outside AOI = -3 (FINAL override)
+            #    This is the most definitive mask - these pixels shouldn't be analyzed
+            flag_band[outside_aoi] = -3
+            
+            filled_mask = filled_mask & aoi_valid
+            
+            print(f"  === FLAG ASSIGNMENT (after AOI mask) ===")
+            
+            # Count pixels after masking
+            n_valid_after = np.sum(filled_mask)
+            n_removed = n_valid_before - n_valid_after
+            
+            if n_removed > 0:
+                print(f"    Removed {n_removed:,} pixels outside AOI ({100*n_removed/n_valid_before:.1f}%)")
+                print(f"    Remaining: {n_valid_after:,} pixels inside AOI")
+            else:
+                print(f"    All pixels are within AOI")
                 
-                if not os.path.exists(raster_path):
-                    continue
-                
-                try:
-                    with rasterio.open(raster_path) as src:
-                        with WarpedVRT(
-                            src,
-                            crs=tile_crs,
-                            resampling=Resampling.bilinear,
-                            transform=output_transform,
-                            width=output_width,
-                            height=output_height
-                        ) as vrt:
-                            # Read only the first band (raster value)
-                            band_data = vrt.read(1)
-                            
-                            # Apply mask if provided
-                            if mask_footprints_gdf is not None:
-                                mask = apply_mask_from_coarse_data(
-                                    raster_path,
-                                    mask_footprints_gdf,
-                                    tile_bounds,
-                                    tile_crs,
-                                    output_height,
-                                    output_width
-                                )
-                                if mask is not None and mask.shape == (output_height, output_width):
-                                    band_data[~mask] = nodata_value
-                            
-                            # Find valid pixels
-                            valid = (band_data != nodata_value) & ~filled_mask
-                            
-                            # Accumulate
-                            sum_data[valid] += band_data[valid]
-                            count_data[valid] += 1
-                            
-                            # Free memory
-                            del band_data
-                            
-                except Exception as e:
-                    print(f"  Warning: Failed to read {raster_path}: {e}")
-                    continue
-            
-            # Calculate mean for raster values
-            valid_mean = (count_data > 0) & ~filled_mask
-            if np.any(valid_mean):
-                mean_data = sum_data / np.maximum(count_data, 1)
-                mosaic_data[0][valid_mean] = mean_data[valid_mean].astype(mosaic_data.dtype)
-                
-                # For year/DOY when there are ties, use first raster's dates
-                fp_row = group[0]
-                doy_val = datetime(int(fp_row['year']), 
-                                 int(fp_row['month']), 
-                                 int(fp_row['day'])).timetuple().tm_yday
-                
-                mosaic_data[1][valid_mean] = fp_row['year']  # Year
-                mosaic_data[2][valid_mean] = doy_val         # DOY
-                filled_mask = filled_mask | valid_mean
-            
-            # Free memory
-            del sum_data, count_data
+        except Exception as e:
+            print(f"    Warning: Failed to apply AOI mask: {e}")
+    
+    # Print summary of raster contributions
+    print(f"\n  === RASTER USAGE SUMMARY ===")
+    print(f"  Total rasters considered: {len(raster_list)}")
+    print(f"  Rasters that contributed pixels: {n_rasters_used}")
+
+    # Print flag statistics
+    print(f"\n  Nodata flags:")
+    print(f"    Valid data (0):                                     {np.sum(flag_band == 0):,} pixels ({100*np.sum(flag_band == 0)/flag_band.size:.1f}%)")
+    print(f"    Non-valid (cloud/shadows/outside extent) (-1):      {np.sum(flag_band == -1):,} pixels ({100*np.sum(flag_band == -1)/flag_band.size:.1f}%)")
+    print(f"    No images available (-2):                           {np.sum(flag_band == -2):,} pixels ({100*np.sum(flag_band == -2)/flag_band.size:.1f}%)")
+    print(f"    Outside AOI (-3):                                   {np.sum(flag_band == -3):,} pixels ({100*np.sum(flag_band == -3)/flag_band.size:.1f}%)")
+    
+    # Count pixels by year (only among filled pixels)
+    year_counts = {}
+    unique_years = np.unique(best_year[filled_mask])
+    for year in unique_years:
+        if year > 0:  # Skip zero values
+            count = np.sum((best_year == year) & filled_mask)  # ← Count only filled pixels with this year
+            year_counts[year] = count
+    
+    if year_counts:
+        total_filled = np.sum(filled_mask)
+        print(f"  Pixels by year:")
+        for year in sorted(year_counts.keys()):
+            pct = 100 * year_counts[year] / total_filled if total_filled > 0 else 0
+            print(f"    {year}: {year_counts[year]:,} pixels ({pct:.1f}%)")
+    
+    # Add verification that year/DOY are pixel-specific
+    if np.sum(filled_mask) > 0:
+        unique_year_doy_combos = set()
+        for year in np.unique(best_year[filled_mask]):
+            if year > 0:
+                doys_for_year = np.unique(best_doy[(best_year == year) & filled_mask])
+                for doy in doys_for_year:
+                    if doy > 0:
+                        unique_year_doy_combos.add((int(year), int(doy)))
+        
+        print(f"\n  Unique year-DOY combinations: {len(unique_year_doy_combos)}")
+        if len(unique_year_doy_combos) <= 10:
+            for year, doy in sorted(unique_year_doy_combos):
+                date_obj = datetime(year, 1, 1) + timedelta(days=doy-1)
+                n_pixels = np.sum((best_year == year) & (best_doy == doy) & filled_mask)
+                print(f"    {year}-{doy:03d} ({date_obj.strftime('%Y-%m-%d')}): {n_pixels:,} pixels")
+    
+    # Calculate statistics
     
     # Calculate statistics
     percent_filled = (np.sum(filled_mask) / (output_height * output_width)) * 100
@@ -655,18 +888,26 @@ def mosaic_tile(tile_row, grid_gdf, footprints_gdf, output_dir, target_year,
     if percent_filled < 1:
         print(f"  Warning: Very low coverage for tile {tile_id}")
     
-    # Define output path (single 3-band file)
-    mosaic_filename = f"mosaic_{target_year}_DOY{target_doy:03d}_{tile_id}.tif"
+    # Define output path (single 4-band file with delta_years and months in name)
+    if include_months is not None:
+        months_str = 'months' + ''.join(str(m) for m in sorted(include_months))
+    else:
+        months_str = 'monthsAll'
+    
+    mosaic_filename = f"mosaic_{target_year}_DOY{target_doy:03d}_deltayr{delta_years:02d}_{months_str}_{tile_id}.tif"
     mosaic_path = os.path.join(output_dir, mosaic_filename)
     
-    # Write 3-band mosaic (as COG)
+    # Write 4-band mosaic (as COG)
     try:
+        # Stack all bands including flag band
+        output_data = np.vstack([mosaic_data, flag_band[np.newaxis, :, :]])
+        
         profile = {
             'driver': 'GTiff',
             'dtype': mosaic_data.dtype,
             'width': output_width,
             'height': output_height,
-            'count': 3,  # 3 bands: value, year, DOY
+            'count': 4,  # 4 bands: value, year, DOY, flag
             'crs': tile_crs,
             'transform': output_transform,
             'nodata': nodata_value,
@@ -679,11 +920,12 @@ def mosaic_tile(tile_row, grid_gdf, footprints_gdf, output_dir, target_year,
         
         # Write mosaic
         with rasterio.open(mosaic_path, 'w', **profile) as dst:
-            dst.write(mosaic_data)
+            dst.write(output_data)
             # Set band descriptions
             dst.set_band_description(1, 'Raster_Value')
             dst.set_band_description(2, 'Year')
             dst.set_band_description(3, 'Day_of_Year')
+            dst.set_band_description(4, 'Nodata_Flag')
         
         # Convert to COG using gdal_translate
         mosaic_path_cog = mosaic_path.replace('.tif', '_COG.tif')
@@ -700,17 +942,18 @@ def mosaic_tile(tile_row, grid_gdf, footprints_gdf, output_dir, target_year,
         # Rename COG to original name
         os.rename(mosaic_path_cog, mosaic_path)
         
-        print(f"  3-band mosaic written: {mosaic_path}")
+        print(f"  4-band mosaic written: {mosaic_path}")
         print(f"    Band 1: Raster Value")
         print(f"    Band 2: Year")
         print(f"    Band 3: Day of Year")
+        print(f"    Band 4: Nodata Flag (0=valid, -1=non-valid/cloud/shadowss/outside extent, -2=no images, -3=outside AOI)")
         
         return {
             'tile_id': tile_id,
             'success': True,
             'output_path': mosaic_path,
             'coverage_percent': percent_filled,
-            'n_images_used': len(score_groups),  # Number of temporal score groups
+            'n_images_used': n_rasters_used,  # ← USE n_rasters_used instead
             'message': 'Success'
         }
         
@@ -783,7 +1026,7 @@ def create_gridded_mosaic(footprints_gpkg, aoi_geom, output_dir, target_year,
                          target_doy=212, delta_years=5, grid_size_km=90,
                          output_resolution=0.5, target_crs=None,
                          mask_footprints_gpkg=None, n_jobs=-1,
-                         include_months=None):
+                         include_months=None, tile_ids=None):
     """
     Create gridded mosaic with temporal prioritization.
     
@@ -819,6 +1062,9 @@ def create_gridded_mosaic(footprints_gpkg, aoi_geom, output_dir, target_year,
     include_months : list of int, optional
         List of months to include (e.g., [6, 7, 8] for summer months).
         If None, all months are included. Default is None.
+    tile_ids : list of str, optional
+        List of specific tile IDs to process (e.g., ['R0001C0002', 'R0003C0005']).
+        If None, all tiles in the grid are processed. Default is None.
     Returns:
     --------
     tuple
@@ -833,7 +1079,8 @@ def create_gridded_mosaic(footprints_gpkg, aoi_geom, output_dir, target_year,
     print("GRIDDED MOSAIC CREATION")
     print("="*80)
     print(f"Target year: {target_year}")
-    print(f"Target DOY: {target_doy} (±{delta_years} years)")
+    print(f"Year range: {target_year - delta_years} to {target_year + delta_years} (±{delta_years} years)")
+    print(f"Target DOY: {target_doy}")
     if include_months is not None:
         print(f"Include months: {include_months}")
     else:
@@ -856,6 +1103,30 @@ def create_gridded_mosaic(footprints_gpkg, aoi_geom, output_dir, target_year,
         footprints_gdf['month'] = footprints_gdf['date'].dt.month
         footprints_gdf['day'] = footprints_gdf['date'].dt.day
         print(f"  Date range: {footprints_gdf['date'].min()} to {footprints_gdf['date'].max()}")
+
+    # Filter footprints by temporal window (years and months) BEFORE spatial operations
+    if 'year' in footprints_gdf.columns:
+        year_min = target_year - delta_years
+        year_max = target_year + delta_years
+        
+        print(f"\nFiltering footprints by temporal window:")
+        print(f"  Year range: {year_min} to {year_max}")
+        n_before_year = len(footprints_gdf)
+        
+        footprints_gdf = footprints_gdf[
+            (footprints_gdf['year'] >= year_min) & 
+            (footprints_gdf['year'] <= year_max)
+        ]
+        
+        n_after_year = len(footprints_gdf)
+        print(f"  After year filter: {n_before_year} → {n_after_year} images")
+        
+        # Filter by months if specified
+        if include_months is not None and 'month' in footprints_gdf.columns:
+            n_before_month = len(footprints_gdf)
+            footprints_gdf = footprints_gdf[footprints_gdf['month'].isin(include_months)]
+            n_after_month = len(footprints_gdf)
+            print(f"  After month filter: {n_after_month} images (months: {include_months})")
     
     # Verify required columns
     required_cols = ['path', 'year', 'month', 'day', 'geometry']
@@ -869,6 +1140,56 @@ def create_gridded_mosaic(footprints_gpkg, aoi_geom, output_dir, target_year,
         print("\nLoading mask footprints...")
         mask_footprints_gdf = gpd.read_file(mask_footprints_gpkg)
         print(f"Loaded {len(mask_footprints_gdf)} mask footprints")
+
+    # Parse mask dates if needed
+    if 'date' in mask_footprints_gdf.columns and 'month' not in mask_footprints_gdf.columns:
+        print("  Parsing mask footprint dates...")
+        mask_footprints_gdf['date'] = pd.to_datetime(mask_footprints_gdf['date'])
+        mask_footprints_gdf['month'] = mask_footprints_gdf['date'].dt.month
+        mask_footprints_gdf['day'] = mask_footprints_gdf['date'].dt.day
+        print(f"    Date range: {mask_footprints_gdf['date'].min()} to {mask_footprints_gdf['date'].max()}")
+    
+    # Check if month column exists
+    if 'month' not in mask_footprints_gdf.columns:
+        print("  WARNING: 'month' column not found in mask_footprints_gdf!")
+        print(f"  Available columns: {mask_footprints_gdf.columns.tolist()}")
+    
+    # Filter mask footprints by temporal window (years and months)
+    if 'year' in mask_footprints_gdf.columns:
+        year_min = target_year - delta_years
+        year_max = target_year + delta_years
+        
+        print(f"\nFiltering mask footprints by temporal window:")
+        print(f"  Year range: {year_min} to {year_max}")
+        print(f"  Before filter: {len(mask_footprints_gdf)} mask images")
+        print(f"  Years in mask data: {sorted(mask_footprints_gdf['year'].unique())}")
+        
+        # Filter by year range
+        mask_footprints_gdf = mask_footprints_gdf[
+            (mask_footprints_gdf['year'] >= year_min) & 
+            (mask_footprints_gdf['year'] <= year_max)
+        ]
+        
+        print(f"  After year filter: {len(mask_footprints_gdf)} mask images")
+        print(f"  Remaining years: {sorted(mask_footprints_gdf['year'].unique())}")
+        
+        # Filter by months if specified
+        if include_months is not None and 'month' in mask_footprints_gdf.columns:
+            print(f"  Month range: {include_months}")
+            print(f"  Before month filter: {len(mask_footprints_gdf)} mask images")
+            
+            mask_footprints_gdf = mask_footprints_gdf[
+                mask_footprints_gdf['month'].isin(include_months)
+            ]
+            
+            print(f"  After month filter: {len(mask_footprints_gdf)} mask images")
+            if len(mask_footprints_gdf) > 0:
+                print(f"  Remaining months: {sorted(mask_footprints_gdf['month'].unique())}")
+            else:
+                print(f"  WARNING: No mask images remain after filtering!")
+    else:
+        print(f"  WARNING: 'year' column not found in mask_footprints_gdf!")
+        print(f"  Available columns: {mask_footprints_gdf.columns.tolist()}")
     
     # Load or process AOI
     if isinstance(aoi_geom, str):
@@ -881,6 +1202,15 @@ def create_gridded_mosaic(footprints_gpkg, aoi_geom, output_dir, target_year,
             raise ValueError(f"AOI string not recognized: {aoi_geom}")
     else:
         aoi_for_grid = aoi_geom
+
+    # Create AOI mask GeoDataFrame for rasterization
+    if isinstance(aoi_for_grid, str) and aoi_for_grid.lower() == 'alaska':
+        # For Alaska, create the bbox geometry
+        aoi_mask_gdf = gpd.GeoDataFrame({'geometry': [box(-170, 51, -130, 72)]}, crs='EPSG:4326')
+    elif isinstance(aoi_for_grid, gpd.GeoDataFrame):
+        aoi_mask_gdf = aoi_for_grid.copy()
+    else:
+        aoi_mask_gdf = aoi_for_grid
     
     # Create grid
     print("\nCreating vector grid...")
@@ -890,6 +1220,25 @@ def create_gridded_mosaic(footprints_gpkg, aoi_geom, output_dir, target_year,
     grid_path = os.path.join(output_dir, 'mosaic_grid.gpkg')
     grid_gdf.to_file(grid_path, driver='GPKG')
     print(f"Grid saved: {grid_path}")
+
+    # Reproject AOI mask to grid CRS
+    if aoi_mask_gdf.crs != grid_gdf.crs:
+        print("\nReprojecting AOI to grid CRS...")
+        aoi_mask_gdf = aoi_mask_gdf.to_crs(grid_gdf.crs)
+
+    # Filter grid by tile_ids if specified
+    if tile_ids is not None:
+        n_tiles_before = len(grid_gdf)
+        grid_gdf = grid_gdf[grid_gdf['tile_id'].isin(tile_ids)].copy()
+        n_tiles_after = len(grid_gdf)
+        
+        if n_tiles_after == 0:
+            raise ValueError(f"No tiles found matching the specified tile_ids: {tile_ids}")
+        
+        print(f"\nFiltered grid to {n_tiles_after} tiles (from {n_tiles_before} total)")
+        print(f"Processing tiles: {sorted(grid_gdf['tile_id'].tolist())}")
+    else:
+        print(f"\nProcessing all {len(grid_gdf)} tiles")
     
     # Reproject footprints to grid CRS if needed
     if footprints_gdf.crs != grid_gdf.crs:
@@ -909,7 +1258,7 @@ def create_gridded_mosaic(footprints_gpkg, aoi_geom, output_dir, target_year,
         delayed(mosaic_tile)(
             row, grid_gdf, footprints_gdf, output_dir, target_year,
             target_doy, delta_years, output_resolution, mask_footprints_gdf,
-            'first', include_months
+            'first', include_months, aoi_mask_gdf
         )
         for idx, row in grid_gdf.iterrows()
     )
@@ -942,14 +1291,243 @@ def create_gridded_mosaic(footprints_gpkg, aoi_geom, output_dir, target_year,
     print("CREATING VRTs")
     print("="*80)
     
+    # Create months string for filename
+    if include_months is not None:
+        months_str = 'months' + ''.join(str(m) for m in sorted(include_months))
+    else:
+        months_str = 'monthsAll'
+    
     mosaic_vrt_path = os.path.join(output_dir, 
-                                   f'mosaic_{target_year}_DOY{target_doy:03d}.vrt')
+                                   f'mosaic_{target_year}_DOY{target_doy:03d}_deltayr{delta_years:02d}_{months_str}.vrt')
     
     create_vrt_from_tiles(output_dir, mosaic_vrt_path, 
-                         pattern=f'mosaic_{target_year}_DOY{target_doy:03d}_*.tif')
+                         pattern=f'mosaic_{target_year}_DOY{target_doy:03d}_deltayr{delta_years:02d}_{months_str}_*.tif')
     
     print("\n" + "="*80)
     print("PROCESSING COMPLETE")
     print("="*80)
+
+# =============================================================================
+    # CREATE MOSAIC-LEVEL SUMMARY
+    # =============================================================================
+    
+    print("\n" + "="*80)
+    print("CREATING MOSAIC SUMMARY")
+    print("="*80)
+    
+    # Filter successful tiles for summary statistics
+    successful_results = results_df[results_df['success'] == True].copy()
+    
+    if len(successful_results) > 0:
+        # Calculate AOI area and coverage area
+        # Get AOI area in square kilometers
+        aoi_area_km2 = aoi_mask_gdf.geometry.area.sum() / 1_000_000  # Convert m² to km²
+        
+        # Calculate coverage area from successful tiles
+        # Each pixel is output_resolution x output_resolution meters
+        pixel_area_m2 = output_resolution * output_resolution
+        
+        # Sum coverage_percent across all successful tiles weighted by tile area
+        # Each tile has the same number of pixels (grid_size_km determines tile size)
+        # Calculate pixels per tile
+        pixels_per_tile_side = int((grid_size_km * 1000) / output_resolution)
+        pixels_per_tile = pixels_per_tile_side * pixels_per_tile_side
+        
+        # Calculate total valid pixels across all successful tiles
+        total_valid_pixels = 0
+        for idx, row in successful_results.iterrows():
+            n_valid_in_tile = int((row['coverage_percent'] / 100.0) * pixels_per_tile)
+            total_valid_pixels += n_valid_in_tile
+        
+        # Calculate coverage area in km²
+        coverage_area_km2 = (total_valid_pixels * pixel_area_m2) / 1_000_000
+        
+        # Calculate proportion of AOI covered
+        aoi_coverage_proportion = coverage_area_km2 / aoi_area_km2 if aoi_area_km2 > 0 else 0
+        
+        # Extract CHM paths from footprints used in the mosaic
+        year_min = target_year - delta_years
+        year_max = target_year + delta_years
+        
+        # Filter footprints to temporal window
+        chms_in_window = footprints_gdf[
+            (footprints_gdf['year'] >= year_min) & 
+            (footprints_gdf['year'] <= year_max)
+        ].copy()
+        
+        # Apply month filter if specified
+        if include_months is not None:
+            chms_in_window = chms_in_window[chms_in_window['month'].isin(include_months)]
+        
+        # Create detailed CHM list with temporal information
+        chm_list = []
+        for idx, row in chms_in_window.iterrows():
+            # Calculate DOY
+            doy = datetime(int(row['year']), int(row['month']), int(row['day'])).timetuple().tm_yday
+            # Calculate temporal score
+            temporal_score = abs(doy - target_doy) + (abs(row['year'] - target_year) * 365)
+            
+            # Extract filename from path
+            chm_filename = os.path.basename(row['path'])
+            
+            chm_list.append({
+                'chm_filename': chm_filename,
+                'chm_path': row['path'],
+                'year': int(row['year']),
+                'month': int(row['month']),
+                'day': int(row['day']),
+                'doy': doy,
+                'temporal_score': temporal_score,
+                'date': f"{int(row['year'])}-{int(row['month']):02d}-{int(row['day']):02d}"
+            })
+        
+        chm_df = pd.DataFrame(chm_list)
+        chm_df = chm_df.sort_values(['temporal_score', 'chm_path']).reset_index(drop=True)
+        
+        # Save detailed CHM list
+        chm_list_path = os.path.join(output_dir, 
+                                     f'chm_list_{target_year}_DOY{target_doy:03d}_deltayr{delta_years:02d}_{months_str}.csv')
+        chm_df.to_csv(chm_list_path, index=False)
+        print(f"CHM list saved: {chm_list_path}")
+        print(f"  Total CHMs in temporal window: {len(chm_df)}")
+        
+        # Aggregate year statistics across all tiles
+        all_year_counts = {}
+        all_year_doy_combos = set()
+        
+        # Get from the footprints data
+        for year in chm_df['year'].unique():
+            year_chms = chm_df[chm_df['year'] == year]
+            all_year_counts[int(year)] = len(year_chms)
+            for doy in year_chms['doy'].unique():
+                all_year_doy_combos.add((int(year), int(doy)))
+        
+        # Create summary statistics dictionary
+        summary_stats = {
+            'mosaic_name': os.path.basename(mosaic_vrt_path).replace('.vrt', ''),
+            'target_year': target_year,
+            'target_doy': target_doy,
+            'delta_years': delta_years,
+            'year_min': year_min,
+            'year_max': year_max,
+            'months_included': str(include_months) if include_months is not None else 'All',
+            'grid_size_km': grid_size_km,
+            'output_resolution_m': output_resolution,
+            'n_tiles_total': len(results_df),
+            'n_tiles_successful': len(successful_results),
+            'n_tiles_failed': len(results_df) - len(successful_results),
+            'n_chms_in_window': len(chm_df),
+            'n_unique_years': len(all_year_counts),
+            'n_unique_year_doy_combinations': len(all_year_doy_combos),
+            'avg_coverage_percent_per_tile': float(successful_results['coverage_percent'].mean()),
+            'min_coverage_percent': float(successful_results['coverage_percent'].min()),
+            'max_coverage_percent': float(successful_results['coverage_percent'].max()),
+            'total_chms_used': int(successful_results['n_images_used'].sum()),
+            'avg_chms_per_tile': float(successful_results['n_images_used'].mean()),
+            'aoi_area_km2': float(aoi_area_km2),
+            'coverage_area_km2': float(coverage_area_km2),
+            'aoi_coverage_proportion': float(aoi_coverage_proportion),
+            'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        }
+        
+        # Add year-specific CHM counts
+        for year in sorted(all_year_counts.keys()):
+            summary_stats[f'n_chms_year_{year}'] = all_year_counts[year]
+        
+        # Save summary CSV
+        summary_csv_path = os.path.join(output_dir,
+                                       f'mosaic_summary_{target_year}_DOY{target_doy:03d}_deltayr{delta_years:02d}_{months_str}.csv')
+        summary_df = pd.DataFrame([summary_stats])
+        summary_df.to_csv(summary_csv_path, index=False)
+        print(f"Summary CSV saved: {summary_csv_path}")
+        
+        # Create detailed text summary
+        summary_txt_path = os.path.join(output_dir,
+                                       f'mosaic_summary_{target_year}_DOY{target_doy:03d}_deltayr{delta_years:02d}_{months_str}.txt')
+        
+        with open(summary_txt_path, 'w') as f:
+            f.write("="*80 + "\n")
+            f.write("MOSAIC SUMMARY REPORT\n")
+            f.write("="*80 + "\n\n")
+            
+            f.write("MOSAIC PARAMETERS\n")
+            f.write("-"*80 + "\n")
+            f.write(f"Mosaic name:           {summary_stats['mosaic_name']}\n")
+            f.write(f"Target year:           {target_year}\n")
+            f.write(f"Target DOY:            {target_doy} ({datetime(target_year, 1, 1) + timedelta(days=target_doy-1):%B %d})\n")
+            f.write(f"Year range:            {year_min} to {year_max} (±{delta_years} years)\n")
+            f.write(f"Months included:       {summary_stats['months_included']}\n")
+            f.write(f"Grid size:             {grid_size_km} km\n")
+            f.write(f"Output resolution:     {output_resolution} m\n")
+            f.write(f"Output directory:      {output_dir}\n")
+            f.write(f"Generated:             {summary_stats['timestamp']}\n\n")
+            
+            f.write("TILE PROCESSING SUMMARY\n")
+            f.write("-"*80 + "\n")
+            f.write(f"Total tiles:           {summary_stats['n_tiles_total']}\n")
+            f.write(f"Successful:            {summary_stats['n_tiles_successful']}\n")
+            f.write(f"Failed:                {summary_stats['n_tiles_failed']}\n")
+            f.write(f"Success rate:          {100*summary_stats['n_tiles_successful']/summary_stats['n_tiles_total']:.1f}%\n\n")
+            
+            f.write("AOI COVERAGE STATISTICS\n")
+            f.write("-"*80 + "\n")
+            f.write(f"AOI area:              {summary_stats['aoi_area_km2']:,.2f} km²\n")
+            f.write(f"Coverage area:         {summary_stats['coverage_area_km2']:,.2f} km²\n")
+            f.write(f"AOI coverage:          {summary_stats['aoi_coverage_proportion']*100:.2f}%\n\n")
+            
+            f.write("TILE COVERAGE STATISTICS\n")
+            f.write("-"*80 + "\n")
+            f.write(f"Avg coverage per tile: {summary_stats['avg_coverage_percent_per_tile']:.2f}%\n")
+            f.write(f"Min coverage per tile: {summary_stats['min_coverage_percent']:.2f}%\n")
+            f.write(f"Max coverage per tile: {summary_stats['max_coverage_percent']:.2f}%\n\n")
+            
+            f.write("INPUT CHM SUMMARY\n")
+            f.write("-"*80 + "\n")
+            f.write(f"Total CHMs in window:  {summary_stats['n_chms_in_window']}\n")
+            f.write(f"Total CHMs used:       {summary_stats['total_chms_used']}\n")
+            f.write(f"Avg CHMs per tile:     {summary_stats['avg_chms_per_tile']:.1f}\n")
+            f.write(f"Unique years:          {summary_stats['n_unique_years']}\n")
+            f.write(f"Unique year-DOY combos: {summary_stats['n_unique_year_doy_combinations']}\n\n")
+            
+            f.write("CHMs BY YEAR\n")
+            f.write("-"*80 + "\n")
+            for year in sorted(all_year_counts.keys()):
+                f.write(f"  {year}: {all_year_counts[year]:,} CHMs\n")
+            f.write("\n")
+            
+            f.write("UNIQUE YEAR-DOY COMBINATIONS\n")
+            f.write("-"*80 + "\n")
+            for year, doy in sorted(all_year_doy_combos):
+                date_obj = datetime(year, 1, 1) + timedelta(days=doy-1)
+                n_chms = len(chm_df[(chm_df['year'] == year) & (chm_df['doy'] == doy)])
+                f.write(f"  {year}-{doy:03d} ({date_obj.strftime('%Y-%m-%d')}): {n_chms} CHM(s)\n")
+            f.write("\n")
+            
+            f.write("TEMPORAL DISTRIBUTION\n")
+            f.write("-"*80 + "\n")
+            f.write(f"Earliest CHM date:     {chm_df['date'].min()}\n")
+            f.write(f"Latest CHM date:       {chm_df['date'].max()}\n")
+            f.write(f"Date range span:       {(pd.to_datetime(chm_df['date'].max()) - pd.to_datetime(chm_df['date'].min())).days} days\n\n")
+            
+            f.write("OUTPUT FILES\n")
+            f.write("-"*80 + "\n")
+            f.write(f"Mosaic VRT:            {mosaic_vrt_path}\n")
+            f.write(f"Processing results:    {results_path}\n")
+            f.write(f"CHM list:              {chm_list_path}\n")
+            f.write(f"Summary CSV:           {summary_csv_path}\n")
+            f.write(f"Summary text:          {summary_txt_path}\n\n")
+            
+            f.write("="*80 + "\n")
+        
+        print(f"Summary text saved: {summary_txt_path}")
+        print(f"\nMosaic-level summary complete!")
+        print(f"  {summary_stats['n_chms_in_window']} CHMs across {summary_stats['n_unique_years']} years")
+        print(f"  {summary_stats['n_unique_year_doy_combinations']} unique year-DOY combinations")
+        print(f"  AOI area: {summary_stats['aoi_area_km2']:,.2f} km²")
+        print(f"  Coverage area: {summary_stats['coverage_area_km2']:,.2f} km²")
+        print(f"  AOI coverage: {summary_stats['aoi_coverage_proportion']*100:.2f}%")
+    
+    else:
+        print("  No successful tiles to summarize.")
     
     return results_df, mosaic_vrt_path
