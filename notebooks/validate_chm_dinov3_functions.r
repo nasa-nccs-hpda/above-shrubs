@@ -224,6 +224,36 @@ map_raster_by_catid <- function(catid,
   
   forest_ht_colors <- c('#636363','#fc8d59','#fee08b','#ffffbf',
                         '#d9ef8b','#91cf60','#1a9850','#005a32')
+  scale_fill_chm_forest_ht_colors = list(
+                  scale_fill_gradientn(colors = forest_ht_colors, 
+                                                          na.value = "transparent",
+                                                          limits = c(0, chm_max_value),
+                                                          oob = scales::squish,
+                              breaks = seq(0, chm_max_value, by = 1),  # Or whatever breaks you want
+                              labels = function(x) {
+                                ifelse(x == max(x), 
+                                       paste0("\u2265 ", x), #, "m"),  # Unicode for ≥
+                                       paste0(x)#, "m")
+                                              )
+                              })
+      )
+  scale_fill_chm_other = list(
+          scale_fill_viridis_c(option = colorbar, 
+                                          na.value = "transparent",
+                                          limits = c(0, chm_max_value),
+                                          oob = scales::squish,
+                                          breaks = seq(0, chm_max_value, by = 1),  # Or whatever breaks you want
+                                          labels = function(x) {
+                                            ifelse(x == max(x), 
+                                                   paste0("\u2265 ", x, "m"),  # Unicode for ≥
+                                                   paste0(x, "m"))
+                                          })
+      )
+  if (use_forest_ht_cmap) {
+    scale_fill_chm =  scale_fill_chm_forest_ht_colors
+  } else {
+    scale_fill_chm =  scale_fill_chm_other
+  }
   
   # Search for CHM file
   if (verbose) {
@@ -335,19 +365,8 @@ map_raster_by_catid <- function(catid,
   
   # Create CHM plot
   p_chm <- ggplot() +
-    geom_raster(data = raster_df, aes(x = x, y = y, fill = value))
-  
-  if (use_forest_ht_cmap) {
-    p_chm <- p_chm + scale_fill_gradientn(colors = forest_ht_colors, 
-                                          na.value = "transparent",
-                                          limits = c(0, chm_max_value),
-                                          oob = scales::squish)
-  } else {
-    p_chm <- p_chm + scale_fill_viridis_c(option = colorbar, 
-                                          na.value = "transparent",
-                                          limits = c(0, chm_max_value),
-                                          oob = scales::squish)
-  }
+    geom_raster(data = raster_df, aes(x = x, y = y, fill = value)) +
+    scale_fill_chm
   
   p_chm <- p_chm +
     coord_sf(crs = native_crs,
@@ -529,7 +548,7 @@ map_raster_by_catid <- function(catid,
       labs(
         x = NULL,
         y = NULL,
-        title = paste("Commercial VHR surface reflectance"), 
+        title = expression("Commercial SR"[VHR]), 
           subtitle = paste0(parsed_filename$sensor, ': ', parsed_filename$date_obj, ' (id: ', catid,')')
       ) +
       theme_bw() +
@@ -580,19 +599,8 @@ map_raster_by_catid <- function(catid,
         
         # Create LVIS CHM plot
         p_lvis <- ggplot() +
-          geom_raster(data = lvis_df, aes(x = x, y = y, fill = value))
-        
-        if (use_forest_ht_cmap) {
-          p_lvis <- p_lvis + scale_fill_gradientn(colors = forest_ht_colors, 
-                                                  na.value = "transparent",
-                                                  limits = c(0, chm_max_value),
-                                                  oob = scales::squish)
-        } else {
-          p_lvis <- p_lvis + scale_fill_viridis_c(option = colorbar, 
-                                                  na.value = "transparent",
-                                                  limits = c(0, chm_max_value),
-                                                  oob = scales::squish)
-        }
+          geom_raster(data = lvis_df, aes(x = x, y = y, fill = value)) + 
+          scale_fill_chm
         
         p_lvis <- p_lvis +
           coord_sf(crs = native_crs,
