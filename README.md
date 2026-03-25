@@ -66,6 +66,7 @@ singularity build --sandbox /lscratch/$USER/container/above-shrubs docker://nasa
 
 ## Authors
 
+- Melanie J. Frost, melanie.frost@nasa.gov
 - Jordan Alexis Caraballo-Vega, jordan.a.caraballo-vega@nasa.gov
 - Matthew Macander, mmacander@abrinc.com
 - Paul M. Montesano, paul.m.montesano@nasa.gov
